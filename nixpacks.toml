@@ -1,0 +1,12 @@
+[phases.setup]
+nixPkgs = ['nodejs-18_x', 'npm-9_x']
+
+[phases.install]
+cmds = ['npm i']
+
+[phases.build]
+cmds = ['npm run build:web-only']
+
+[start]
+cmd = 'echo "Static site built - no server needed"'
+
