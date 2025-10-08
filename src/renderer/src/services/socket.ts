@@ -180,6 +180,20 @@ class SocketService {
     this.socket.emit('sync-room-state', { roomId });
   }
 
+  // 🔧 请求房间创建人保存内容（用于同步前确保最新内容已保存）
+  requestCreatorSave(roomId: string) {
+    if (!this.socket) return;
+    console.log('💾 Requesting room creator to save content:', roomId);
+    this.socket.emit('request-creator-save', { roomId });
+  }
+
+  // 🔧 确认已保存内容（房间创建人响应保存请求）
+  confirmContentSaved(roomId: string) {
+    if (!this.socket) return;
+    console.log('✅ Confirming content saved:', roomId);
+    this.socket.emit('content-saved-confirmation', { roomId });
+  }
+
   // Event listeners
   onRoomJoined(callback: (data: any) => void) {
     if (!this.socket) {
@@ -305,6 +319,18 @@ class SocketService {
   onReconnectFailed(callback: () => void) {
     if (!this.socket) return;
     this.socket.on('reconnect_failed', callback);
+  }
+
+  // 🔧 监听保存请求（房间创建人接收）
+  onSaveRequest(callback: (data: any) => void) {
+    if (!this.socket) return;
+    this.socket.on('request-creator-save', callback);
+  }
+
+  // 🔧 监听保存确认（其他成员接收）
+  onContentSavedConfirmation(callback: (data: any) => void) {
+    if (!this.socket) return;
+    this.socket.on('content-saved-confirmation', callback);
   }
 
   // Remove event listeners

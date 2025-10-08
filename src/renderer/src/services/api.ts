@@ -128,7 +128,14 @@ export const roomsAPI = {
   getMyCreatedRooms: () => api.get('/rooms/my-rooms?type=created'),
   getHistory: () => api.get('/rooms/my-rooms?type=history'),
   getAllRooms: () => api.get('/rooms'),
-  getRoom: (id: string) => api.get(`/rooms/${id}`),
+  getRoom: (id: string, skipCache: boolean = false) => {
+    // 添加时间戳参数避免缓存，同时添加Cache-Control头
+    const params = skipCache ? { _t: Date.now() } : {};
+    return api.get(`/rooms/${id}`, { 
+      params,
+      headers: skipCache ? { 'Cache-Control': 'no-cache' } : {}
+    });
+  },
   getRoomByCode: (roomCode: string) => api.get(`/rooms/code/${roomCode}`),
   createRoom: (data: any) => api.post('/rooms', data),
   updateRoom: (id: string, data: any) => api.patch(`/rooms/${id}`, data),

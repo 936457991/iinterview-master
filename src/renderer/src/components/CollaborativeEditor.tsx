@@ -17,6 +17,8 @@ import {
   ArrowLeftOutlined,
   SaveOutlined,
   ShareAltOutlined,
+  SyncOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -140,6 +142,51 @@ const CollaborativeEditor: React.FC = () => {
   const [yjsConnectionStatus, setYjsConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'reconnecting'>('connecting');
   const [showReconnectingBar, setShowReconnectingBar] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<number | null>(null);
+  const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
+  
+  // 🔧 使用 useRef 保存最新的 room 和 user，避免闭包问题
+  const roomRef = useRef(room);
+  const userRef = useRef(user);
+  
+  // 🔧 用于等待保存确认的 Promise
+  const savePendingPromise = useRef<{
+    resolve: (value: boolean) => void;
+    reject: (reason?: any) => void;
+  } | null>(null);
+  
+  useEffect(() => {
+    roomRef.current = room;
+  }, [room]);
+  
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+  
+  // 🔧 实时更新同步冷却倒计时
+  useEffect(() => {
+    const COOLDOWN_TIME = 60 * 1000; // 1分钟
+    
+    const updateCooldown = () => {
+      if (lastSyncTime) {
+        const now = Date.now();
+        const elapsed = now - lastSyncTime;
+        const remaining = Math.max(0, Math.ceil((COOLDOWN_TIME - elapsed) / 1000));
+        setCooldownRemaining(remaining);
+      } else {
+        setCooldownRemaining(0);
+      }
+    };
+    
+    // 立即更新一次
+    updateCooldown();
+    
+    // 每秒更新一次
+    const timer = setInterval(updateCooldown, 1000);
+    
+    return () => clearInterval(timer);
+  }, [lastSyncTime]);
   
   // 🔧 监听网络状态变化
   useEffect(() => {
@@ -154,6 +201,43 @@ const CollaborativeEditor: React.FC = () => {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  // 🎹 监听快捷键 Option+/ 触发同步（只对非管理员生效）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 调试：打印所有按键信息
+      if (e.altKey) {
+        console.log('🎹 Alt key pressed:', {
+          key: e.key,
+          code: e.code,
+          keyCode: e.keyCode,
+          altKey: e.altKey
+        });
+      }
+
+      // Option+/ (Mac) 或 Alt+/ (Windows/Linux)
+      // 使用多种方式检测斜杠键：key, code, keyCode
+      const isSlashKey = e.key === '/' || e.code === 'Slash' || e.keyCode === 191;
+      
+      if (e.altKey && isSlashKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault();
+        
+        // 只有非管理员才能触发同步
+        if (!isRoomAdmin()) {
+          console.log('🎹 快捷键 Option+/ 被触发，执行同步操作');
+          handleSyncContent();
+        } else {
+          console.log('🎹 房间创建人不需要同步功能');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [roomId, room, isSyncing]);
   const cursorDecorations = useRef<string[]>([]);
   const selectionDecorations = useRef<string[]>([]);
   const typingTimeout = useRef<Map<string, NodeJS.Timeout>>(new Map());
@@ -1196,6 +1280,78 @@ const CollaborativeEditor: React.FC = () => {
       });
     });
 
+    // 🔧 监听保存请求（房间创建人接收）
+    socketService.onSaveRequest(async (data: any) => {
+      console.log('💾 收到同步请求:', data);
+      
+      // 使用 ref 获取最新的值，避免闭包问题
+      const currentRoom = roomRef.current;
+      const currentUser = userRef.current;
+      const currentRoomId = data.roomId;
+      const requesterUsername = data.requestedByUsername || '某用户';
+      
+      // 直接在这里检查是否为管理员
+      const currentMember = currentRoom?.members?.find(m => m.user.id === currentUser?.id);
+      const isAdmin = currentMember?.role === 'admin';
+      
+      // 只有房间创建人才响应保存请求
+      if (isAdmin && editorRef.current && currentRoomId) {
+        console.log('💾 房间创建人收到同步请求，弹出确认对话框');
+        
+        // 弹出确认对话框
+        Modal.confirm({
+          title: t('editor.syncRequestTitle'),
+          content: t('editor.syncRequestContent', { username: requesterUsername }),
+          okText: t('editor.agreeSync'),
+          cancelText: t('editor.refuseSync'),
+          onOk: async () => {
+            console.log('✅ 房间创建人同意同步请求，保存当前内容');
+            try {
+              const currentContent = editorRef.current.getValue();
+              console.log('💾 准备保存的内容长度:', currentContent.length);
+              console.log('💾 准备保存的内容预览:', currentContent.substring(0, 200));
+              
+              const updateResponse = await roomsAPI.updateRoom(currentRoomId, {
+                content: currentContent,
+                language: currentLanguage
+              });
+              
+              console.log('✅ 房间创建人内容已保存到数据库');
+              console.log('✅ 保存响应:', updateResponse.data);
+              setLastSavedContent(currentContent);
+              lastSentContentHash.current = simpleHash(currentContent);
+              
+              // 通知其他用户内容已保存（同意）
+              socketService.confirmContentSaved(currentRoomId);
+              message.success(t('editor.syncRequestAgreed'));
+            } catch (error) {
+              console.error('❌ 保存内容失败:', error);
+              message.error(t('editor.saveFailed'));
+            }
+          },
+          onCancel: () => {
+            console.log('❌ 房间创建人拒绝同步请求');
+            // 可以在这里添加拒绝通知
+            message.info(t('editor.syncRequestRefused'));
+          }
+        });
+      } else {
+        console.log('💾 ❌ 不满足保存条件，跳过保存');
+      }
+    });
+
+    // 🔧 监听保存确认（其他成员接收）
+    socketService.onContentSavedConfirmation((data: any) => {
+      console.log('✅ 收到保存确认:', data);
+      
+      // 如果有等待中的同步Promise，解析它
+      if (savePendingPromise.current) {
+        console.log('✅ 解析等待中的同步Promise');
+        savePendingPromise.current.resolve(true);
+        savePendingPromise.current = null;
+      }
+    });
+
     // 监听房间结束事件
     socketService.onRoomEnded((data: any) => {
       console.log('🔚 Received room-ended event:', data);
@@ -1286,6 +1442,8 @@ const CollaborativeEditor: React.FC = () => {
     socketService.off('language-changed');
     socketService.off('room-ended');
     socketService.off('room-force-deleted');
+    socketService.off('request-creator-save');
+    socketService.off('content-saved-confirmation');
 
     // 清理Socket连接
     socketService.leaveRoom();
@@ -1915,6 +2073,129 @@ const CollaborativeEditor: React.FC = () => {
     });
   };
 
+  // 同步房间创建人的内容
+  const handleSyncContent = async () => {
+    if (!roomId || !room || isSyncing) {
+      return;
+    }
+
+    // 检查冷却时间（1分钟内只能同步一次）
+    const now = Date.now();
+    const COOLDOWN_TIME = 60 * 1000; // 1分钟
+    if (lastSyncTime && (now - lastSyncTime) < COOLDOWN_TIME) {
+      const remainingTime = Math.ceil((COOLDOWN_TIME - (now - lastSyncTime)) / 1000);
+      message.warning(t('editor.syncCooldown', { seconds: remainingTime }));
+      return;
+    }
+
+    try {
+      setIsSyncing(true);
+      message.loading({ content: t('editor.syncing'), key: 'sync' });
+
+      // 如果当前用户不是房间创建人，先请求创建人保存内容
+      if (!isRoomAdmin()) {
+        console.log('🔄 非管理员触发同步，请求房间创建人保存内容');
+        console.log('🔄 发送 requestCreatorSave 到房间:', roomId);
+        socketService.requestCreatorSave(roomId);
+        
+        // 等待创建人的保存确认，最多等待10秒
+        console.log('🔄 等待创建人保存确认...');
+        const saveConfirmed = await new Promise<boolean>((resolve, reject) => {
+          // 保存Promise的resolve和reject函数
+          savePendingPromise.current = { resolve, reject };
+          
+          // 设置超时，10秒后自动继续
+          setTimeout(() => {
+            if (savePendingPromise.current) {
+              console.log('⏰ 等待保存确认超时，继续同步流程');
+              savePendingPromise.current.resolve(false);
+              savePendingPromise.current = null;
+            }
+          }, 10000);
+        });
+        
+        if (saveConfirmed) {
+          console.log('✅ 收到保存确认，继续同步流程');
+        } else {
+          console.log('⏰ 超时或未收到确认，仍继续同步流程');
+        }
+        
+        // 额外等待500ms确保数据库写入完成
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+
+      // 从后端获取最新的房间内容（添加时间戳避免缓存）
+      console.log('🔄 从数据库获取最新房间内容...');
+      const response = await roomsAPI.getRoom(roomId, true); // skipCache = true
+      const latestRoom = response.data;
+
+      console.log('🔄 获取到的房间数据:', {
+        id: latestRoom?.id,
+        name: latestRoom?.name,
+        contentLength: latestRoom?.content?.length || 0,
+        contentPreview: latestRoom?.content?.substring(0, 100) || '',
+        language: latestRoom?.language
+      });
+
+      if (!latestRoom) {
+        console.log('❌ 房间数据为空');
+        message.error({ content: t('editor.syncFailed'), key: 'sync' });
+        setIsSyncing(false);
+        return;
+      }
+
+      // 直接同步内容，不检查差异，不需要确认
+      console.log('🔄 开始同步内容到编辑器...');
+      
+      try {
+        // 使用 Y.js 文档更新内容，确保同步到所有客户端
+        if (yjsDocRef.current) {
+          const yText = yjsDocRef.current.getText('content');
+          const syncContent = latestRoom.content || ''; // 如果内容为空，同步为空字符串
+          
+          console.log('🔄 通过 Y.js 同步内容，长度:', syncContent.length);
+          
+          // 在事务中更新内容，避免冲突
+          yjsDocRef.current.transact(() => {
+            yText.delete(0, yText.length); // 清空现有内容
+            yText.insert(0, syncContent); // 插入最新内容
+          }, 'sync-from-creator');
+
+          setLastSavedContent(syncContent);
+          lastSentContentHash.current = simpleHash(syncContent);
+          
+          message.success({ content: t('editor.syncSuccess'), key: 'sync' });
+          setLastSyncTime(Date.now()); // 记录同步时间
+        } else {
+          // 如果 Y.js 不可用，直接更新编辑器
+          if (editorRef.current) {
+            const syncContent = latestRoom.content || '';
+            console.log('🔄 通过编辑器 setValue 同步内容，长度:', syncContent.length);
+            
+            editorRef.current.setValue(syncContent);
+            setLastSavedContent(syncContent);
+            lastSentContentHash.current = simpleHash(syncContent);
+            message.success({ content: t('editor.syncSuccess'), key: 'sync' });
+            setLastSyncTime(Date.now()); // 记录同步时间
+          }
+        }
+      } catch (error) {
+        console.error('同步内容失败:', error);
+        message.error({ content: t('editor.syncFailed'), key: 'sync' });
+      }
+    } catch (error: any) {
+      console.error('获取最新内容失败:', error);
+      
+      if (error.response?.status === 404) {
+        message.error({ content: t('room.roomNotFound'), key: 'sync' });
+      } else {
+        message.error({ content: t('editor.syncFailed'), key: 'sync' });
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const copyRoomCode = async (roomCode?: string) => {
     if (!roomCode) {
       message.error(t('editor.roomCodeNotFound'));
@@ -1935,12 +2216,12 @@ const CollaborativeEditor: React.FC = () => {
   const isRoomAdmin = () => {
     const currentMember = room?.members?.find(m => m.user.id === user?.id);
     const isAdmin = currentMember?.role === 'admin';
-    console.log('🔐 权限检查:', {
-      userId: user?.id,
-      currentMember,
-      isAdmin,
-      allMembers: room?.members?.map(m => ({ userId: m.user.id, role: m.role }))
-    });
+    // console.log('🔐 权限检查:', {
+    //   userId: user?.id,
+    //   currentMember,
+    //   isAdmin,
+    //   allMembers: room?.members?.map(m => ({ userId: m.user.id, role: m.role }))
+    // });
     return isAdmin;
   };
 
@@ -2091,10 +2372,26 @@ const CollaborativeEditor: React.FC = () => {
             <Option value="rust">Rust</Option>
           </Select>
 
-          {/* 所有房间成员都可以保存 */}
-          <Button icon={<SaveOutlined />} onClick={handleSave}>
-            {t('common.save')}
-          </Button>
+          {/* 只有房间创建人可以保存 */}
+          {isRoomAdmin() && (
+            <Button icon={<SaveOutlined />} onClick={handleSave}>
+              {t('common.save')}
+            </Button>
+          )}
+
+          {/* 同步按钮 - 只有非创建人才显示，用于同步房间创建人的最新内容 (Option+/) */}
+          {!isRoomAdmin() && (
+            <Button 
+              danger
+              icon={cooldownRemaining > 0 ? <ExclamationCircleOutlined /> : <SyncOutlined spin={isSyncing} />} 
+              onClick={handleSyncContent}
+              loading={isSyncing}
+              disabled={isSyncing || cooldownRemaining > 0}
+              title={cooldownRemaining > 0 ? t('editor.syncCooldownTitle', { seconds: cooldownRemaining }) : t('editor.syncWarningHint')}
+            >
+              {cooldownRemaining > 0 ? t('editor.syncCooldownButton', { seconds: cooldownRemaining }) : t('editor.syncContent')}
+            </Button>
+          )}
 
           {/* 只有房间管理员可以结束房间 */}
           {isRoomAdmin() && (
