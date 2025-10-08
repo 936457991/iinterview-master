@@ -149,12 +149,19 @@ const CollaborativeEditor: React.FC = () => {
   // 🔧 使用 useRef 保存最新的 room 和 user，避免闭包问题
   const roomRef = useRef(room);
   const userRef = useRef(user);
+  const currentLanguageRef = useRef(currentLanguage);
   
   // 🔧 用于等待保存确认的 Promise
   const savePendingPromise = useRef<{
     resolve: (value: boolean) => void;
     reject: (reason?: any) => void;
   } | null>(null);
+  
+  // 🔧 用于清理保存确认超时定时器
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 🔧 用于防止重复弹出同步确认对话框
+  const syncConfirmModalRef = useRef<boolean>(false);
   
   useEffect(() => {
     roomRef.current = room;
@@ -163,6 +170,10 @@ const CollaborativeEditor: React.FC = () => {
   useEffect(() => {
     userRef.current = user;
   }, [user]);
+  
+  useEffect(() => {
+    currentLanguageRef.current = currentLanguage;
+  }, [currentLanguage]);
   
   // 🔧 实时更新同步冷却倒计时
   useEffect(() => {
@@ -1298,6 +1309,15 @@ const CollaborativeEditor: React.FC = () => {
       if (isAdmin && editorRef.current && currentRoomId) {
         console.log('💾 房间创建人收到同步请求，弹出确认对话框');
         
+        // 检查是否已经有对话框打开
+        if (syncConfirmModalRef.current) {
+          console.log('⚠️ 已有同步确认对话框打开，跳过本次请求');
+          return;
+        }
+        
+        // 标记对话框已打开
+        syncConfirmModalRef.current = true;
+        
         // 弹出确认对话框
         Modal.confirm({
           title: t('editor.syncRequestTitle'),
@@ -1308,12 +1328,14 @@ const CollaborativeEditor: React.FC = () => {
             console.log('✅ 房间创建人同意同步请求，保存当前内容');
             try {
               const currentContent = editorRef.current.getValue();
+              const currentLang = currentLanguageRef.current; // 使用 ref 获取最新语言
               console.log('💾 准备保存的内容长度:', currentContent.length);
               console.log('💾 准备保存的内容预览:', currentContent.substring(0, 200));
+              console.log('💾 准备保存的语言:', currentLang);
               
               const updateResponse = await roomsAPI.updateRoom(currentRoomId, {
                 content: currentContent,
-                language: currentLanguage
+                language: currentLang
               });
               
               console.log('✅ 房间创建人内容已保存到数据库');
@@ -1327,12 +1349,17 @@ const CollaborativeEditor: React.FC = () => {
             } catch (error) {
               console.error('❌ 保存内容失败:', error);
               message.error(t('editor.saveFailed'));
+            } finally {
+              // 重置标志，允许下次弹窗
+              syncConfirmModalRef.current = false;
             }
           },
           onCancel: () => {
             console.log('❌ 房间创建人拒绝同步请求');
             // 可以在这里添加拒绝通知
             message.info(t('editor.syncRequestRefused'));
+            // 重置标志，允许下次弹窗
+            syncConfirmModalRef.current = false;
           }
         });
       } else {
@@ -1347,6 +1374,14 @@ const CollaborativeEditor: React.FC = () => {
       // 如果有等待中的同步Promise，解析它
       if (savePendingPromise.current) {
         console.log('✅ 解析等待中的同步Promise');
+        
+        // 🔧 清除超时定时器，防止内存泄漏
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = null;
+          console.log('✅ 已清除保存确认超时定时器');
+        }
+        
         savePendingPromise.current.resolve(true);
         savePendingPromise.current = null;
       }
@@ -1485,11 +1520,17 @@ const CollaborativeEditor: React.FC = () => {
     lastTypingTime.current = 0;
     lastSentContentHash.current = '';
 
+    // 🔧 清理保存确认超时定时器
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+
     // 重置标志
     isEndingRoom.current = false;
   };
 
-  // 定时保存功能 - 每3秒保存一次
+  // 定时保存功能 - 每5秒保存一次
   useEffect(() => {
     if (!room || !editorRef.current) return;
 
@@ -1910,7 +1951,8 @@ const CollaborativeEditor: React.FC = () => {
     });
   };
 
-  const handleLanguageChange = (language: string) => {
+  const handleLanguageChange = async (language: string) => {
+    console.log('🔄 切换语言:', currentLanguage, '->', language);
     setCurrentLanguage(language);
     socketService.sendLanguageChange(roomId!, language);
     
@@ -1920,6 +1962,16 @@ const CollaborativeEditor: React.FC = () => {
         editorRef.current.getModel(),
         language
       );
+    }
+    
+    // 保存语言设置到数据库
+    try {
+      console.log('💾 开始保存语言到数据库:', { roomId: roomId, language });
+      const response = await roomsAPI.updateRoom(roomId!, { language });
+      console.log('✅ Language saved to database successfully:', response.data);
+    } catch (error) {
+      console.error('❌ Failed to save language to database:', error);
+      // 不显示错误提示，避免打断用户操作
     }
   };
 
@@ -2105,12 +2157,13 @@ const CollaborativeEditor: React.FC = () => {
           savePendingPromise.current = { resolve, reject };
           
           // 设置超时，10秒后自动继续
-          setTimeout(() => {
+          saveTimeoutRef.current = setTimeout(() => {
             if (savePendingPromise.current) {
               console.log('⏰ 等待保存确认超时，继续同步流程');
               savePendingPromise.current.resolve(false);
               savePendingPromise.current = null;
             }
+            saveTimeoutRef.current = null;
           }, 10000);
         });
         
@@ -2142,6 +2195,27 @@ const CollaborativeEditor: React.FC = () => {
         message.error({ content: t('editor.syncFailed'), key: 'sync' });
         setIsSyncing(false);
         return;
+      }
+
+      // 同步语言设置
+      console.log('🔄 检查语言同步:', {
+        fromDB: latestRoom.language,
+        current: currentLanguage,
+        needSync: latestRoom.language && latestRoom.language !== currentLanguage
+      });
+      
+      if (latestRoom.language && latestRoom.language !== currentLanguage) {
+        console.log('🔄 同步语言:', currentLanguage, '->', latestRoom.language);
+        setCurrentLanguage(latestRoom.language);
+        // 更新Monaco编辑器语言
+        if (monacoRef.current && editorRef.current) {
+          const model = editorRef.current.getModel();
+          if (model) {
+            monacoRef.current.editor.setModelLanguage(model, latestRoom.language);
+          }
+        }
+      } else {
+        console.log('🔄 语言无需同步，保持当前语言:', currentLanguage);
       }
 
       // 直接同步内容，不检查差异，不需要确认
