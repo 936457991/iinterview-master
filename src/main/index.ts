@@ -33,6 +33,14 @@ function createWindow(): void {
 
   mainWindow.setContentProtection(true)
 
+  // Windows 平台特殊处理：确保窗口真正置顶
+  // 需要在窗口创建后再次调用 setAlwaysOnTop，并使用 'screen-saver' 级别
+  if (process.platform === 'win32') {
+    // 使用 screen-saver 级别确保在 Windows 上真正置顶
+    mainWindow.setAlwaysOnTop(true, 'screen-saver')
+    console.log('🪟 Windows 平台：窗口置顶已启用（screen-saver 级别）')
+  }
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -196,8 +204,16 @@ function registerGlobalShortcuts(): void {
     globalShortcut.register('CommandOrControl+Alt+T', () => {
       if (mainWindow) {
         const isCurrentlyOnTop = mainWindow.isAlwaysOnTop()
-        mainWindow.setAlwaysOnTop(!isCurrentlyOnTop)
-        console.log(`窗口置顶: ${!isCurrentlyOnTop ? '开启' : '关闭'}`)
+        const newState = !isCurrentlyOnTop
+        
+        // Windows 平台使用 screen-saver 级别确保真正置顶
+        if (process.platform === 'win32') {
+          mainWindow.setAlwaysOnTop(newState, newState ? 'screen-saver' : 'normal')
+          console.log(`🪟 Windows 窗口置顶: ${newState ? '开启 (screen-saver级别)' : '关闭'}`)
+        } else {
+          mainWindow.setAlwaysOnTop(newState)
+          console.log(`窗口置顶: ${newState ? '开启' : '关闭'}`)
+        }
       }
     })
 

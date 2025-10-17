@@ -164,7 +164,9 @@
     "agreeSync": "同意",
     "refuseSync": "拒绝",
     "syncRequestAgreed": "已同意同步请求并保存内容",
-    "syncRequestRefused": "已拒绝同步请求"
+    "syncRequestRefused": "已拒绝同步请求",
+    "formatSyncHint": "提示：如果代码格式错乱，请使用",
+    "formatSyncHintShortcut": "快捷键同步代码"
   },
   "settings": {
     "settings": "设置",

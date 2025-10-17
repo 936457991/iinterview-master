@@ -162,7 +162,9 @@
     "agreeSync": "Agree",
     "refuseSync": "Refuse",
     "syncRequestAgreed": "Sync request agreed and content saved",
-    "syncRequestRefused": "Sync request refused"
+    "syncRequestRefused": "Sync request refused",
+    "formatSyncHint": "Tip: If code format is messy, use",
+    "formatSyncHintShortcut": "to sync code"
   },
   "settings": {
     "settings": "Settings",

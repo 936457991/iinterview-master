@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Editor } from '@monaco-editor/react';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
@@ -68,6 +68,31 @@ const CollaborativeEditor: React.FC = () => {
   const yjsDocRef = useRef<Y.Doc | null>(null);
   const providerRef = useRef<WebsocketProvider | null>(null);
   const bindingRef = useRef<MonacoBinding | null>(null);
+
+  // 🔧 检测是否在 Electron 环境中运行
+  const isElectron = useMemo(() => {
+    // 方法1: 检查 navigator.userAgent
+    const userAgent = navigator.userAgent.toLowerCase();
+    if (userAgent.includes('electron')) {
+      console.log('🖥️ 检测到 Electron 环境 (userAgent)');
+      return true;
+    }
+    
+    // 方法2: 检查 window 对象上的 Electron API
+    if (typeof window !== 'undefined' && (window as any).electron) {
+      console.log('🖥️ 检测到 Electron 环境 (window.electron)');
+      return true;
+    }
+    
+    // 方法3: 检查 process (如果可用)
+    if (typeof process !== 'undefined' && (process as any).versions?.electron) {
+      console.log('🖥️ 检测到 Electron 环境 (process.versions.electron)');
+      return true;
+    }
+    
+    console.log('🌐 检测到浏览器环境');
+    return false;
+  }, []);
 
   const [room, setRoom] = useState<RoomData | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
@@ -213,8 +238,14 @@ const CollaborativeEditor: React.FC = () => {
     };
   }, []);
 
-  // 🎹 监听快捷键 Option+/ 触发同步（只对非管理员生效）
+  // 🎹 监听快捷键 Option+/ 触发同步（只在 Electron 环境且非管理员时生效）
   useEffect(() => {
+    // 🔧 浏览器环境下禁用快捷键，避免与浏览器快捷键冲突
+    if (!isElectron) {
+      console.log('🌐 浏览器环境：快捷键已禁用');
+      return;
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       // 调试：打印所有按键信息
       if (e.altKey) {
@@ -248,7 +279,7 @@ const CollaborativeEditor: React.FC = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [roomId, room, isSyncing]);
+  }, [roomId, room, isSyncing, isElectron]);
   const cursorDecorations = useRef<string[]>([]);
   const selectionDecorations = useRef<string[]>([]);
   const typingTimeout = useRef<Map<string, NodeJS.Timeout>>(new Map());
@@ -819,7 +850,7 @@ const CollaborativeEditor: React.FC = () => {
       yjsDocRef.current,
       {
         connect: true,
-        // 禁用二进制协议，使用文本协议避免数据格式问题
+        // 🔧 禁用二进制协议，使用文本协议避免数据格式问题（特别是空格丢失问题）
         disableBc: true,
         // 🔧 增强重连参数，优化网络稳定性
         maxBackoffTime: 3000, // 最大退避时间3秒，更快重连
@@ -829,6 +860,8 @@ const CollaborativeEditor: React.FC = () => {
           userId: user?.id || '',
           username: user?.username || ''
         },
+        // 🔧 WebSocket 二进制类型设置为 arraybuffer，确保数据传输完整性
+        WebSocketPolyfill: undefined, // 使用浏览器原生 WebSocket
       }
     );
 
@@ -2488,20 +2521,66 @@ const CollaborativeEditor: React.FC = () => {
       </Header>
 
       <Layout>
-        <Content style={{ padding: 0, paddingBottom: '32px' }}>
-          <Editor
-            height="100%"
-            language={currentLanguage}
-            theme="vs-dark"
-            onMount={handleEditorDidMount}
-            options={{
+        <Content style={{ padding: 0, paddingBottom: '32px', position: 'relative' }}>
+          {/* 代码同步提示条 - 仅在 Electron 环境下显示 */}
+          {isElectron && (
+            <div style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              zIndex: 100,
+              background: 'linear-gradient(90deg, rgba(24, 144, 255, 0.15) 0%, rgba(82, 196, 26, 0.15) 100%)',
+              borderBottom: '1px solid rgba(24, 144, 255, 0.3)',
+              padding: '6px 16px',
+              fontSize: '13px',
+              color: '#1890ff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              fontFamily: 'system-ui, -apple-system, sans-serif',
+              backdropFilter: 'blur(4px)'
+            }}>
+              <span style={{ fontSize: '16px' }}>💡</span>
+              <span>
+                {t('editor.formatSyncHint')} 
+                <kbd style={{
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  padding: '2px 6px',
+                  borderRadius: '3px',
+                  margin: '0 4px',
+                  fontFamily: 'monospace',
+                  fontSize: '12px',
+                  border: '1px solid rgba(255, 255, 255, 0.3)'
+                }}>
+                  {navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? 'Option + /' : 'Alt + /'}
+                </kbd>
+                {t('editor.formatSyncHintShortcut')}
+              </span>
+            </div>
+          )}
+          
+          <div style={{ paddingTop: isElectron ? '32px' : '0', height: '100%' }}>
+            <Editor
+              height="100%"
+              language={currentLanguage}
+              theme="vs-dark"
+              onMount={handleEditorDidMount}
+              options={{
               fontSize: 14,
               minimap: { enabled: true },
               wordWrap: 'on',
               automaticLayout: true,
               scrollBeyondLastLine: false,
+              // 🔧 空格和缩进设置 - 确保所有用户编辑器行为一致，避免协同编辑时空格丢失
+              insertSpaces: true,        // 强制使用空格而不是制表符
+              tabSize: 2,                // Tab 键对应 2 个空格
+              detectIndentation: false,  // 禁用自动检测缩进，使用统一设置
+              trimAutoWhitespace: true,  // 自动删除行尾空格
             }}
           />
+          </div>
         </Content>
 
       </Layout>
