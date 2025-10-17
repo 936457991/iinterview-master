@@ -238,7 +238,7 @@ const CollaborativeEditor: React.FC = () => {
     };
   }, []);
 
-  // 🎹 监听快捷键 Option+/ 触发同步（只在 Electron 环境且非管理员时生效）
+  // 🎹 监听快捷键 Cmd+| (Mac) 或 Ctrl+| (Windows/Linux) 触发同步（只在 Electron 环境且非管理员时生效）
   useEffect(() => {
     // 🔧 浏览器环境下禁用快捷键，避免与浏览器快捷键冲突
     if (!isElectron) {
@@ -248,25 +248,31 @@ const CollaborativeEditor: React.FC = () => {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // 调试：打印所有按键信息
-      if (e.altKey) {
-        console.log('🎹 Alt key pressed:', {
+      if (e.metaKey || e.ctrlKey) {
+        console.log('🎹 Cmd/Ctrl key pressed:', {
           key: e.key,
           code: e.code,
           keyCode: e.keyCode,
-          altKey: e.altKey
+          metaKey: e.metaKey,
+          ctrlKey: e.ctrlKey
         });
       }
 
-      // Option+/ (Mac) 或 Alt+/ (Windows/Linux)
-      // 使用多种方式检测斜杠键：key, code, keyCode
-      const isSlashKey = e.key === '/' || e.code === 'Slash' || e.keyCode === 191;
+      // Cmd+| (Mac) 或 Ctrl+| (Windows/Linux)
+      // 使用多种方式检测竖线键：key='|', code='Backslash' (通常是 Shift+\), keyCode=220
+      const isPipeKey = e.key === '|' || (e.code === 'Backslash' && e.shiftKey) || e.key === '\\' && e.shiftKey;
       
-      if (e.altKey && isSlashKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      // Mac: Cmd键，Windows/Linux: Ctrl键
+      const isModifierPressed = (navigator.platform.toUpperCase().indexOf('MAC') >= 0) 
+        ? e.metaKey && !e.ctrlKey 
+        : e.ctrlKey && !e.metaKey;
+      
+      if (isModifierPressed && isPipeKey && !e.altKey) {
         e.preventDefault();
         
         // 只有非管理员才能触发同步
         if (!isRoomAdmin()) {
-          console.log('🎹 快捷键 Option+/ 被触发，执行同步操作');
+          console.log('🎹 快捷键 Cmd+| / Ctrl+| 被触发，执行同步操作');
           handleSyncContent();
         } else {
           console.log('🎹 房间创建人不需要同步功能');
@@ -2486,7 +2492,7 @@ const CollaborativeEditor: React.FC = () => {
             </Button>
           )}
 
-          {/* 同步按钮 - 只有非创建人才显示，用于同步房间创建人的最新内容 (Option+/) */}
+          {/* 同步按钮 - 只有非创建人才显示，用于同步房间创建人的最新内容 (Cmd+| / Ctrl+|) */}
           {!isRoomAdmin() && (
             <Button 
               danger
@@ -2554,7 +2560,7 @@ const CollaborativeEditor: React.FC = () => {
                   fontSize: '12px',
                   border: '1px solid rgba(255, 255, 255, 0.3)'
                 }}>
-                  {navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? 'Option + /' : 'Alt + /'}
+                  {navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? 'Cmd + |' : 'Ctrl + |'}
                 </kbd>
                 {t('editor.formatSyncHintShortcut')}
               </span>
