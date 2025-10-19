@@ -426,6 +426,14 @@ function registerGlobalShortcuts(): void {
       }
     })
 
+    // Cmd/Ctrl + Shift + ": 触发同步内容（全局快捷键）
+    globalShortcut.register('CommandOrControl+Shift+\'', () => {
+      if (mainWindow) {
+        console.log('🎹 全局快捷键 Cmd+Shift+" 被触发，发送同步请求到渲染进程')
+        mainWindow.webContents.send('trigger-sync-content')
+      }
+    })
+
     console.log('全局快捷键注册成功')
     console.log('⌨️ Monaco编辑器键盘滚动快捷键（主进程）:')
     console.log('  基础滚动: Ctrl/Cmd + Shift + 方向键 (50px)')

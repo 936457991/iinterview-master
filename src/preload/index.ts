@@ -10,7 +10,21 @@ const api = {
   getPlatform: () => process.platform,
   
   // 检查是否是开发环境
-  isDev: () => process.env.NODE_ENV === 'development'
+  isDev: () => process.env.NODE_ENV === 'development',
+  
+  // 监听同步内容触发事件（从主进程的全局快捷键）
+  onTriggerSyncContent: (callback: () => void) => {
+    // 先移除所有旧的监听器，确保只有一个监听器
+    ipcRenderer.removeAllListeners('trigger-sync-content')
+    ipcRenderer.on('trigger-sync-content', callback)
+    console.log('🔧 [Preload] 已注册 trigger-sync-content 监听器')
+  },
+  
+  // 移除同步内容监听器
+  offTriggerSyncContent: (callback: () => void) => {
+    ipcRenderer.off('trigger-sync-content', callback)
+    console.log('🔧 [Preload] 已移除 trigger-sync-content 监听器')
+  }
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

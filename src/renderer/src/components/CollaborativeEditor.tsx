@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { Editor } from '@monaco-editor/react';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
@@ -171,6 +171,9 @@ const CollaborativeEditor: React.FC = () => {
   const [lastSyncTime, setLastSyncTime] = useState<number | null>(null);
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
   
+  // 🔒 同步执行锁，防止重复触发
+  const syncExecutingRef = useRef(false);
+  
   // 🔧 使用 useRef 保存最新的 room 和 user，避免闭包问题
   const roomRef = useRef(room);
   const userRef = useRef(user);
@@ -238,54 +241,63 @@ const CollaborativeEditor: React.FC = () => {
     };
   }, []);
 
-  // 🎹 监听快捷键 Cmd+| (Mac) 或 Ctrl+| (Windows/Linux) 触发同步（只在 Electron 环境且非管理员时生效）
+  // 🎹 使用 ref 存储最新的状态，避免频繁重新注册 IPC 监听器
+  const cooldownRemainingRef = useRef(cooldownRemaining);
+  const isSyncingRef = useRef(isSyncing);
+  
   useEffect(() => {
-    // 🔧 浏览器环境下禁用快捷键，避免与浏览器快捷键冲突
-    if (!isElectron) {
-      console.log('🌐 浏览器环境：快捷键已禁用');
-      return;
-    }
+    cooldownRemainingRef.current = cooldownRemaining;
+    isSyncingRef.current = isSyncing;
+  }, [cooldownRemaining, isSyncing]);
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // 调试：打印所有按键信息
-      if (e.metaKey || e.ctrlKey) {
-        console.log('🎹 Cmd/Ctrl key pressed:', {
-          key: e.key,
-          code: e.code,
-          keyCode: e.keyCode,
-          metaKey: e.metaKey,
-          ctrlKey: e.ctrlKey
-        });
-      }
-
-      // Cmd+| (Mac) 或 Ctrl+| (Windows/Linux)
-      // 使用多种方式检测竖线键：key='|', code='Backslash' (通常是 Shift+\), keyCode=220
-      const isPipeKey = e.key === '|' || (e.code === 'Backslash' && e.shiftKey) || e.key === '\\' && e.shiftKey;
-      
-      // Mac: Cmd键，Windows/Linux: Ctrl键
-      const isModifierPressed = (navigator.platform.toUpperCase().indexOf('MAC') >= 0) 
-        ? e.metaKey && !e.ctrlKey 
-        : e.ctrlKey && !e.metaKey;
-      
-      if (isModifierPressed && isPipeKey && !e.altKey) {
-        e.preventDefault();
-        
-        // 只有非管理员才能触发同步
-        if (!isRoomAdmin()) {
-          console.log('🎹 快捷键 Cmd+| / Ctrl+| 被触发，执行同步操作');
-          handleSyncContent();
-        } else {
-          console.log('🎹 房间创建人不需要同步功能');
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
+  // 🎹 使用 useCallback 固定 handleSyncTrigger 的引用，防止重复注册监听器
+  const handleSyncTrigger = useCallback(() => {
+    console.log('🎹 全局快捷键被触发', { 
+      cooldownRemaining: cooldownRemainingRef.current, 
+      isSyncing: isSyncingRef.current, 
+      isAdmin: isRoomAdmin(),
+      syncHandlerExists: !!syncHandlerRef.current 
+    });
     
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [roomId, room, isSyncing, isElectron]);
+    // 只有非管理员才能触发同步
+    if (!isRoomAdmin()) {
+      // 检查是否在冷却期间
+      if (cooldownRemainingRef.current > 0) {
+        message.warning(t('editor.syncCooldown', { seconds: cooldownRemainingRef.current }));
+        console.log(`🎹 快捷键触发失败：冷却中，剩余 ${cooldownRemainingRef.current} 秒`);
+      } else if (isSyncingRef.current) {
+        message.info(t('editor.syncing'));
+        console.log('🎹 快捷键触发失败：正在同步中');
+      } else if (syncHandlerRef.current) {
+        console.log('🎹 全局快捷键 Cmd+Shift+" / Ctrl+Shift+" 被触发，执行同步操作');
+        syncHandlerRef.current();
+      } else {
+        console.error('❌ syncHandlerRef.current 未定义！');
+      }
+    } else {
+      console.log('🎹 房间创建人不需要同步功能');
+    }
+  }, [roomId, room, t]); // 只依赖不常变化的值
+
+  // 🎹 监听全局快捷键 Cmd+Shift+" (Mac) 或 Ctrl+Shift+" (Windows/Linux) 触发同步（非管理员时生效）
+  // 这是通过 Electron 的 globalShortcut 注册的，应用在后台时也能触发
+  useEffect(() => {
+    // 如果在 Electron 环境中，监听来自主进程的 IPC 消息
+    if (isElectron && (window as any).api?.onTriggerSyncContent) {
+      (window as any).api.onTriggerSyncContent(handleSyncTrigger);
+      console.log('✅ 已注册全局快捷键 IPC 监听器');
+      
+      return () => {
+        if ((window as any).api?.offTriggerSyncContent) {
+          (window as any).api.offTriggerSyncContent(handleSyncTrigger);
+          console.log('✅ 已移除全局快捷键 IPC 监听器');
+        }
+      };
+    } else {
+      console.log('🌐 浏览器环境：全局快捷键不可用');
+      return () => {}; // 浏览器环境下返回空函数
+    }
+  }, [isElectron, handleSyncTrigger]); // 只在 isElectron 或 handleSyncTrigger 变化时重新注册
   const cursorDecorations = useRef<string[]>([]);
   const selectionDecorations = useRef<string[]>([]);
   const typingTimeout = useRef<Map<string, NodeJS.Timeout>>(new Map());
@@ -300,6 +312,7 @@ const CollaborativeEditor: React.FC = () => {
   const userColorStyles = useRef<HTMLStyleElement | null>(null); // 动态样式表
   const isEndingRoom = useRef<boolean>(false); // 标记用户是否主动结束房间
   const userColorMap = useRef<Map<string, string>>(new Map()); // 用户颜色映射表
+  const syncHandlerRef = useRef<(() => void) | null>(null); // 同步函数引用
 
   // 🔧 手动重连Y.js WebSocket
   const reconnectYjs = () => {
@@ -659,14 +672,22 @@ const CollaborativeEditor: React.FC = () => {
       // 🔧 设置更新标志，防止递归
       isUpdatingDecorations.current = true;
       
-      // 应用装饰
-      const newDecorations = editorRef.current.deltaDecorations(cursorDecorations.current, decorations);
-      cursorDecorations.current = newDecorations;
-      console.log('🎨 Applied decorations, new decoration IDs:', newDecorations);
+      // 🔧 使用 requestAnimationFrame 延迟应用装饰，打破递归链
+      requestAnimationFrame(() => {
+        try {
+          if (editorRef.current) {
+            const newDecorations = editorRef.current.deltaDecorations(cursorDecorations.current, decorations);
+            cursorDecorations.current = newDecorations;
+          }
+        } catch (error) {
+          console.error('🎨 Error applying cursor decorations:', error);
+        } finally {
+          // 🔧 重置更新标志
+          isUpdatingDecorations.current = false;
+        }
+      });
     } catch (error) {
-      console.error('🎨 Error applying cursor decorations:', error);
-    } finally {
-      // 🔧 重置更新标志
+      console.error('🎨 Error scheduling cursor decorations:', error);
       isUpdatingDecorations.current = false;
     }
   };
@@ -714,13 +735,22 @@ const CollaborativeEditor: React.FC = () => {
       // 🔧 设置更新标志，防止递归
       isUpdatingDecorations.current = true;
       
-      // 应用装饰
-      const newDecorations = editorRef.current.deltaDecorations(selectionDecorations.current, decorations);
-      selectionDecorations.current = newDecorations;
+      // 🔧 使用 requestAnimationFrame 延迟应用装饰，打破递归链
+      requestAnimationFrame(() => {
+        try {
+          if (editorRef.current) {
+            const newDecorations = editorRef.current.deltaDecorations(selectionDecorations.current, decorations);
+            selectionDecorations.current = newDecorations;
+          }
+        } catch (error) {
+          console.error('🎨 Error applying selection decorations:', error);
+        } finally {
+          // 🔧 重置更新标志
+          isUpdatingDecorations.current = false;
+        }
+      });
     } catch (error) {
-      console.error('🎨 Error applying selection decorations:', error);
-    } finally {
-      // 🔧 重置更新标志
+      console.error('🎨 Error scheduling selection decorations:', error);
       isUpdatingDecorations.current = false;
     }
   };
@@ -2166,6 +2196,12 @@ const CollaborativeEditor: React.FC = () => {
 
   // 同步房间创建人的内容
   const handleSyncContent = async () => {
+    // 🔒 检查执行锁，防止重复触发
+    if (syncExecutingRef.current) {
+      console.log('⚠️ 同步正在执行中，忽略重复触发');
+      return;
+    }
+    
     if (!roomId || !room || isSyncing) {
       return;
     }
@@ -2180,6 +2216,10 @@ const CollaborativeEditor: React.FC = () => {
     }
 
     try {
+      // 🔒 设置执行锁
+      syncExecutingRef.current = true;
+      console.log('🔒 已设置同步执行锁');
+      
       setIsSyncing(true);
       message.loading({ content: t('editor.syncing'), key: 'sync' });
 
@@ -2233,6 +2273,7 @@ const CollaborativeEditor: React.FC = () => {
         console.log('❌ 房间数据为空');
         message.error({ content: t('editor.syncFailed'), key: 'sync' });
         setIsSyncing(false);
+        syncExecutingRef.current = false; // 🔓 释放执行锁
         return;
       }
 
@@ -2306,8 +2347,13 @@ const CollaborativeEditor: React.FC = () => {
       }
     } finally {
       setIsSyncing(false);
+      syncExecutingRef.current = false; // 🔓 释放执行锁
+      console.log('🔓 已释放同步执行锁');
     }
   };
+
+  // 将同步函数赋值给 ref，供快捷键使用
+  syncHandlerRef.current = handleSyncContent;
 
   const copyRoomCode = async (roomCode?: string) => {
     if (!roomCode) {
@@ -2492,7 +2538,7 @@ const CollaborativeEditor: React.FC = () => {
             </Button>
           )}
 
-          {/* 同步按钮 - 只有非创建人才显示，用于同步房间创建人的最新内容 (Cmd+| / Ctrl+|) */}
+          {/* 同步按钮 - 只有非创建人才显示，用于同步房间创建人的最新内容 (全局快捷键: Cmd+Shift+" / Ctrl+Shift+") */}
           {!isRoomAdmin() && (
             <Button 
               danger
@@ -2560,14 +2606,14 @@ const CollaborativeEditor: React.FC = () => {
                   fontSize: '12px',
                   border: '1px solid rgba(255, 255, 255, 0.3)'
                 }}>
-                  {navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? 'Cmd + |' : 'Ctrl + |'}
+                  {navigator.platform.toUpperCase().indexOf('MAC') >= 0 ? 'Cmd + Shift + "' : 'Ctrl + Shift + "'}
                 </kbd>
                 {t('editor.formatSyncHintShortcut')}
               </span>
             </div>
           )}
           
-          <div style={{ paddingTop: isElectron ? '32px' : '0', height: '100%' }}>
+          <div style={{ paddingTop: !isRoomAdmin() ? '32px' : '0', height: '100%' }}>
             <Editor
               height="100%"
               language={currentLanguage}
