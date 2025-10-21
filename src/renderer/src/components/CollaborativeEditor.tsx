@@ -11,6 +11,7 @@ import {
   Select,
   message,
   Modal,
+  Tooltip,
 } from 'antd';
 
 import {
@@ -100,6 +101,16 @@ const CollaborativeEditor: React.FC = () => {
   const [loading, setLoading] = useState(true);
   // 穿透模式状态
   const [isMouseThroughMode, setIsMouseThroughMode] = useState(false);
+  
+  // 🎨 编辑器主题状态（黑底/白底）
+  const [editorTheme, setEditorTheme] = useState<'vs-dark' | 'vs-light'>(() => {
+    // 从 localStorage 读取用户的主题偏好
+    const savedTheme = localStorage.getItem('editor_theme');
+    return (savedTheme === 'vs-light' || savedTheme === 'vs-dark') 
+      ? savedTheme 
+      : 'vs-dark'; // 默认深色主题
+  });
+  
   const [initializationSteps, setInitializationSteps] = useState({
     roomDataLoaded: false,
     editorMounted: false,
@@ -170,6 +181,13 @@ const CollaborativeEditor: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<number | null>(null);
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
+  
+  // 🔔 气泡提醒状态
+  const [showBubble, setShowBubble] = useState(false);
+  const [bubbleText, setBubbleText] = useState('');
+  const [bubblePosition, setBubblePosition] = useState({ top: 0, left: 0 });
+  const bubbleTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const bubbleCooldownRef = useRef<number>(0); // 气泡冷却结束时间戳（ms）
   
   // 🔒 同步执行锁，防止重复触发
   const syncExecutingRef = useRef(false);
@@ -1456,6 +1474,40 @@ const CollaborativeEditor: React.FC = () => {
       }
     });
 
+    // 🔔 监听气泡提醒（接收其他用户发送的气泡）
+    socketService.onBubbleReminder((data: { text: string; userId?: string; username?: string }) => {
+      console.log('🔔 收到气泡提醒:', data);
+      
+      // 设置气泡文本
+      setBubbleText(data.text);
+      
+      // 🔧 根据环境设置不同的顶部偏移量
+      // Electron 环境：50px（因为有同步提示条占用了32px空间）
+      // Web 环境：18px（没有同步提示条）
+      const topOffset = isElectron ? 50 : 18;
+      
+      // 设置气泡位置（居中显示）
+      setBubblePosition({
+        top: topOffset,
+        left: 50
+      });
+      
+      // 显示气泡
+      setShowBubble(true);
+      console.log(`🔔 显示远程气泡提醒: "${data.text}"`);
+      
+      // 清除之前的定时器
+      if (bubbleTimeoutRef.current) {
+        clearTimeout(bubbleTimeoutRef.current);
+      }
+      
+      // 3秒后渐进消失
+      bubbleTimeoutRef.current = setTimeout(() => {
+        setShowBubble(false);
+        console.log('🔔 远程气泡提醒已隐藏');
+      }, 3000);
+    });
+
     // 监听房间结束事件
     socketService.onRoomEnded((data: any) => {
       console.log('🔚 Received room-ended event:', data);
@@ -2020,6 +2072,77 @@ const CollaborativeEditor: React.FC = () => {
     });
   };
 
+  // 🔔 处理显示气泡提醒
+  const handleShowBubble = () => {
+    console.log('🟡 handleShowBubble clicked');
+    const now = Date.now();
+    if (bubbleCooldownRef.current && now < bubbleCooldownRef.current) {
+      const remaining = Math.ceil((bubbleCooldownRef.current - now) / 1000);
+      console.log(`⏳ Bubble on cooldown: ${remaining}s remaining`);
+      message.warning(t('editor.bubbleCooldownTitle', { seconds: remaining }) || `气泡冷却中 (${remaining}s)`);
+      return;
+    }
+
+    if (!editorRef.current || !monacoRef.current) {
+      console.log('❌ 编辑器未加载');
+      message.error(t('editor.initializationFailed') || '初始化失败');
+      return;
+    }
+
+    const selection = editorRef.current.getSelection();
+    if (!selection || selection.isEmpty()) {
+      message.warning(t('editor.selectTextFirst') || '请先选中文本');
+      return;
+    }
+
+    const selectedText = editorRef.current.getModel()?.getValueInRange(selection) || '';
+    if (!selectedText.trim()) {
+      message.warning(t('editor.selectTextFirst') || '请先选中文本');
+      return;
+    }
+
+    // 文本长度限制：20个字符
+    const text = selectedText.trim();
+    const displayText = text.length > 20 ? text.substring(0, 20) + '...' : text;
+    
+    console.log(`🔔 显示气泡提醒，原文本长度: ${text.length}，显示文本: "${displayText}"`);
+    
+    setBubbleText(displayText);
+    
+    // 🔧 根据环境设置不同的顶部偏移量
+    // Electron 环境：50px（因为有同步提示条占用了32px空间）
+    // Web 环境：18px（没有同步提示条）
+    const topOffset = isElectron ? 50 : 18;
+    
+    // 设置气泡位置（居中显示）
+    setBubblePosition({
+      top: topOffset,
+      left: 50 // 这个值会被 CSS 的 left: 50% 覆盖，但保留以便将来扩展
+    });
+    
+    setShowBubble(true);
+
+    // 设置5秒冷却
+    bubbleCooldownRef.current = Date.now() + 5000;
+    
+    // 🌐 通过 WebSocket 同步气泡提醒到其他用户
+    if (roomId && socketService) {
+      socketService.sendBubbleReminder(roomId, displayText);
+      console.log(`🌐 已发送气泡提醒到房间 ${roomId}: "${displayText}"`);
+    }
+    
+    // 清除之前的定时器
+    if (bubbleTimeoutRef.current) {
+      clearTimeout(bubbleTimeoutRef.current);
+    }
+    
+    // 3秒后渐进消失
+    bubbleTimeoutRef.current = setTimeout(() => {
+      setShowBubble(false);
+      console.log('🔔 气泡提醒已隐藏');
+    }, 3000);
+  };
+
   const handleLanguageChange = async (language: string) => {
     console.log('🔄 切换语言:', currentLanguage, '->', language);
     setCurrentLanguage(language);
@@ -2042,6 +2165,31 @@ const CollaborativeEditor: React.FC = () => {
       console.error('❌ Failed to save language to database:', error);
       // 不显示错误提示，避免打断用户操作
     }
+  };
+
+  // 🎨 切换编辑器主题（黑底/白底）
+  const handleThemeChange = () => {
+    // 切换主题
+    const newTheme = editorTheme === 'vs-dark' ? 'vs-light' : 'vs-dark';
+    setEditorTheme(newTheme);
+    
+    // 保存到 localStorage
+    localStorage.setItem('editor_theme', newTheme);
+    
+    // 更新 Monaco 编辑器主题
+    if (monacoRef.current && editorRef.current) {
+      monacoRef.current.editor.setTheme(newTheme);
+    }
+    
+    // 日志记录
+    console.log(`🎨 切换编辑器主题: ${editorTheme} -> ${newTheme}`);
+    
+    // 成功提示
+    message.success(
+      newTheme === 'vs-dark' 
+        ? t('editor.themeDark') || '已切换到深色主题'
+        : t('editor.themeLight') || '已切换到浅色主题'
+    );
   };
 
   const handleSave = async () => {
@@ -2463,12 +2611,14 @@ const CollaborativeEditor: React.FC = () => {
       }}>
         <Space>
           {/* 所有用户都可以退出房间返回Dashboard */}
-          <Button
-            icon={<ArrowLeftOutlined />}
-            onClick={handleLeaveRoom}
-          >
-            {t('room.leaveRoom')}
-          </Button>
+          <Tooltip title={t('editor.leaveRoomHint') || '退出当前房间，返回房间列表'}>
+            <Button
+              icon={<ArrowLeftOutlined />}
+              onClick={handleLeaveRoom}
+            >
+              {t('room.leaveRoom')}
+            </Button>
+          </Tooltip>
           <div style={{display:'flex',alignItems: 'center'}}>
             <Title level={4} style={{ margin: 0, lineHeight: 1.2 }}>
               {room?.name}
@@ -2492,19 +2642,22 @@ const CollaborativeEditor: React.FC = () => {
           {isMouseThroughMode && (
             <div
               style={{
-                color: 'rgba(255, 0, 0, 0.9)',
-                padding: '4px 8px',
+                color: '#ff4d4f',
+                backgroundColor: 'rgba(255, 77, 79, 0.1)',
+                padding: '4px 12px',
                 borderRadius: '4px',
-                fontSize: '16px',
-                fontWeight: 'bold',
+                fontSize: '14px',
+                fontWeight: '600',
                 animation: 'pulse 2s infinite',
                 userSelect: 'none',
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
-                gap: '4px'
+                gap: '6px',
+                border: '1px solid rgba(255, 77, 79, 0.3)',
+                boxShadow: '0 2px 4px rgba(255, 77, 79, 0.15)'
               }}
             >
-              🔓 处于穿透模式
+              <span style={{ fontSize: '16px' }}>🔓</span>
               <style>{`
                 @keyframes pulse {
                   0% { opacity: 1; }
@@ -2516,65 +2669,123 @@ const CollaborativeEditor: React.FC = () => {
           )}
 
           {/* 所有用户都可以选择语言 */}
-          <Select
-            value={currentLanguage}
-            onChange={handleLanguageChange}
-            style={{ width: 120 }}
-          >
-            <Option value="javascript">JavaScript</Option>
-            <Option value="typescript">TypeScript</Option>
-            <Option value="python">Python</Option>
-            <Option value="java">Java</Option>
-            <Option value="cpp">C++</Option>
-            <Option value="csharp">C#</Option>
-            <Option value="go">Go</Option>
-            <Option value="rust">Rust</Option>
-          </Select>
+          <Tooltip title={t('editor.selectLanguageHint') || '选择代码编辑语言'}>
+            <Select
+              value={currentLanguage}
+              onChange={handleLanguageChange}
+              style={{ width: 120 }}
+            >
+              <Option value="javascript">JavaScript</Option>
+              <Option value="typescript">TypeScript</Option>
+              <Option value="python">Python</Option>
+              <Option value="java">Java</Option>
+              <Option value="cpp">C++</Option>
+              <Option value="csharp">C#</Option>
+              <Option value="go">Go</Option>
+              <Option value="rust">Rust</Option>
+            </Select>
+          </Tooltip>
+
+          {/* 🎨 主题切换按钮（黑底/白底） */}
+          <Tooltip title={editorTheme === 'vs-dark' ? (t('editor.switchToLight') || '切换到浅色主题') : (t('editor.switchToDark') || '切换到深色主题')}>
+            <Button 
+              onClick={handleThemeChange}
+              icon={editorTheme === 'vs-dark' ? '🌙' : '☀️'}
+            >
+              {editorTheme === 'vs-dark' ? t('editor.lightTheme') || '浅色' : t('editor.darkTheme') || '深色'}
+            </Button>
+          </Tooltip>
+
+          {/* 🔔 气泡提醒按钮 - 仅Web端显示，Electron端隐藏但功能保留 */}
+          {!isElectron && (
+            <Button 
+              onClick={handleShowBubble}
+              icon={'🔔'}
+            >
+              {t('editor.bubble') || '气泡提醒'}
+              <Tooltip title={t('editor.showBubbleHint') || '气泡显示选中文本，可给候选人关键提示信息，防止代码太多，漏看，长度限制20字符'}>
+                <span style={{ 
+                  marginLeft: '6px',
+                  fontSize: '12px',
+                  color: '#595959',
+                  backgroundColor: '#f5f5f5',
+                  borderRadius: '50%',
+                  width: '18px',
+                  height: '18px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'help',
+                  fontWeight: 'bold',
+                  transition: 'all 0.2s',
+                  border: '1px solid #d9d9d9'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#1890ff';
+                  e.currentTarget.style.color = '#fff';
+                  e.currentTarget.style.borderColor = '#1890ff';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#f5f5f5';
+                  e.currentTarget.style.color = '#595959';
+                  e.currentTarget.style.borderColor = '#d9d9d9';
+                }}
+                >?</span>
+              </Tooltip>
+            </Button>
+          )}
 
           {/* 只有房间创建人可以保存 */}
-          {isRoomAdmin() && (
-            <Button icon={<SaveOutlined />} onClick={handleSave}>
-              {t('common.save')}
-            </Button>
+          {!isElectron && isRoomAdmin() && (
+            <Tooltip title={t('editor.saveCodeHint') || '保存当前代码到数据库'}>
+              <Button icon={<SaveOutlined />} onClick={handleSave}>
+                {t('common.save')}
+              </Button>
+            </Tooltip>
           )}
 
           {/* 同步按钮 - 只有非创建人才显示，用于同步房间创建人的最新内容 (全局快捷键: Cmd+Shift+" / Ctrl+Shift+") */}
-          {!isRoomAdmin() && (
-            <Button 
-              danger
-              icon={cooldownRemaining > 0 ? <ExclamationCircleOutlined /> : <SyncOutlined spin={isSyncing} />} 
-              onClick={handleSyncContent}
-              loading={isSyncing}
-              disabled={isSyncing || cooldownRemaining > 0}
-              title={cooldownRemaining > 0 ? t('editor.syncCooldownTitle', { seconds: cooldownRemaining }) : t('editor.syncWarningHint')}
-            >
-              {cooldownRemaining > 0 ? t('editor.syncCooldownButton', { seconds: cooldownRemaining }) : t('editor.syncContent')}
-            </Button>
-          )}
+           {!isRoomAdmin() && (
+            <Tooltip title={cooldownRemaining > 0 ? t('editor.syncCooldownTitle', { seconds: cooldownRemaining }) : (t('editor.syncContentHint') || '从房间创建人同步最新代码')}>
+              <Button 
+                danger
+                icon={cooldownRemaining > 0 ? <ExclamationCircleOutlined /> : <SyncOutlined spin={isSyncing} />} 
+                onClick={handleSyncContent}
+                loading={isSyncing}
+                disabled={isSyncing || cooldownRemaining > 0}
+              >
+                {cooldownRemaining > 0 ? t('editor.syncCooldownButton', { seconds: cooldownRemaining }) : t('editor.syncContent')}
+              </Button>
+            </Tooltip>
+           )}
 
           {/* 只有房间管理员可以结束房间 */}
           {isRoomAdmin() && (
-            <Button
-              danger
-              onClick={handleEndRoom}
-              style={{ marginLeft: 8 }}
-            >
-              {t('room.endRoom')}
-            </Button>
+            <Tooltip title={t('editor.endRoomHint') || '结束房间，所有成员将被退出'}>
+              <Button
+                danger
+                onClick={handleEndRoom}
+                style={{ marginLeft: 8 }}
+              >
+                {t('room.endRoom')}
+              </Button>
+            </Tooltip>
           )}
 
           {/* 只有房间管理员可以分享 */}
-          {isRoomAdmin() && (
-            <Button icon={<ShareAltOutlined />} onClick={() => copyRoomCode(room?.roomCode)}>
-              {t('common.share')}
-            </Button>
+          {!isElectron && isRoomAdmin() && (
+            <Tooltip title={t('editor.shareRoomHint') || '复制房间号，分享给他人加入'}>
+              <Button icon={<ShareAltOutlined />} onClick={() => copyRoomCode(room?.roomCode)}>
+                {t('common.share')}
+              </Button>
+            </Tooltip>
           )}
         </Space>
       </Header>
 
       <Layout>
         <Content style={{ padding: 0, paddingBottom: '32px', position: 'relative' }}>
-          {/* 代码同步提示条 - 仅在 Electron 环境下显示 */}
+          {/* 代码同步提示条 - 仅在 Electron 环境下显示（所有用户包括管理员） */}
           {isElectron && (
             <div style={{
               position: 'absolute',
@@ -2613,11 +2824,11 @@ const CollaborativeEditor: React.FC = () => {
             </div>
           )}
           
-          <div style={{ paddingTop: !isRoomAdmin() ? '32px' : '0', height: '100%' }}>
+          <div style={{ paddingTop: isElectron ? '32px' : '0', height: '100%' }}>
             <Editor
               height="100%"
               language={currentLanguage}
-              theme="vs-dark"
+              theme={editorTheme}
               onMount={handleEditorDidMount}
               options={{
               fontSize: 14,
@@ -2633,6 +2844,41 @@ const CollaborativeEditor: React.FC = () => {
             }}
           />
           </div>
+
+          {/* 🔔 气泡提醒显示组件 */}
+          {showBubble && (
+            <div
+              style={{
+                position: 'absolute',
+                top: `${bubblePosition.top}px`,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: 'linear-gradient(135deg, #fff9c4 0%, #fff59d 50%, #ffeb3b 100%)',
+                color: '#333',
+                padding: '10px 20px',
+                borderRadius: '8px',
+                boxShadow: '0 4px 16px rgba(255, 235, 59, 0.3)',
+                border: '1px solid rgba(255, 193, 7, 0.3)',
+                zIndex: 1000,
+                pointerEvents: 'none',
+                fontSize: '14px',
+                fontWeight: 500,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: '300px',
+                animation: 'bubbleFadeIn 0.3s ease-out, bubbleFadeOut 0.5s ease-in 2.5s forwards',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <span style={{ fontSize: '16px' }}>🔔</span>
+              <span style={{ fontFamily: 'Monaco, Menlo, "Ubuntu Mono", Consolas, monospace' }}>
+                {bubbleText}
+              </span>
+            </div>
+          )}
         </Content>
 
       </Layout>

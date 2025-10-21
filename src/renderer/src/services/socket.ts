@@ -153,6 +153,14 @@ class SocketService {
     this.socket.emit('language-change', { roomId, language });
   }
 
+  // 🔔 发送气泡提醒到房间
+  sendBubbleReminder(roomId: string, text: string) {
+    if (!this.socket) return;
+
+    this.socket.emit('bubble-reminder', { roomId, text });
+    console.log('🔔 发送气泡提醒:', { roomId, text });
+  }
+
   sendSelectionChange(roomId: string, selection: {
     startLineNumber: number;
     startColumn: number;
@@ -331,6 +339,20 @@ class SocketService {
   onContentSavedConfirmation(callback: (data: any) => void) {
     if (!this.socket) return;
     this.socket.on('content-saved-confirmation', callback);
+  }
+
+  // 🔔 监听气泡提醒（其他成员接收）
+  onBubbleReminder(callback: (data: { text: string }) => void) {
+    if (!this.socket) return;
+    this.socket.on('bubble-reminder', callback);
+    console.log('🔔 已注册气泡提醒监听器');
+  }
+
+  // 🔒 监听房间创建人在线状态变化
+  onCreatorStatusChanged(callback: (data: { roomId: string; isCreatorOnline: boolean; creatorId: string; creatorUsername: string }) => void) {
+    if (!this.socket) return;
+    this.socket.on('creator-status-changed', callback);
+    console.log('🔒 已注册创建人状态监听器');
   }
 
   // Remove event listeners
