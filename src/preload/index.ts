@@ -24,6 +24,15 @@ const api = {
   offTriggerSyncContent: (callback: () => void) => {
     ipcRenderer.off('trigger-sync-content', callback)
     console.log('🔧 [Preload] 已移除 trigger-sync-content 监听器')
+  },
+  
+  // 透明度控制 API
+  getOpacity: (): Promise<number> => {
+    return ipcRenderer.invoke('get-opacity')
+  },
+  
+  setOpacity: (opacity: number): Promise<number> => {
+    return ipcRenderer.invoke('set-opacity', opacity)
   }
 }
 

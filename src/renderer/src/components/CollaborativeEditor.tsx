@@ -5,13 +5,14 @@ import { WebsocketProvider } from 'y-websocket';
 import { MonacoBinding } from 'y-monaco';
 import {
   Layout,
-  Typography,
   Space,
   Button,
   Select,
   message,
   Modal,
   Tooltip,
+  Slider,
+  Card,
 } from 'antd';
 
 import {
@@ -20,6 +21,8 @@ import {
   ShareAltOutlined,
   SyncOutlined,
   ExclamationCircleOutlined,
+  ToolOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -30,7 +33,6 @@ import { getCurrentConfig } from '../config';
 import './CollaborativeEditor.css';
 
 const { Header, Content } = Layout;
-const { Title } = Typography;
 const { Option } = Select;
 
 interface User {
@@ -111,6 +113,19 @@ const CollaborativeEditor: React.FC = () => {
       : 'vs-dark'; // 默认深色主题
   });
   
+  // 📝 编辑器字体大小状态
+  const [editorFontSize, setEditorFontSize] = useState<number>(() => {
+    // 从 localStorage 读取用户的字体大小偏好
+    const savedFontSize = localStorage.getItem('editor_fontSize');
+    return savedFontSize ? parseInt(savedFontSize, 10) : 14; // 默认14px
+  });
+  
+  // 透明度控制状态
+  const [opacity, setOpacity] = useState(100); // 百分比形式 (0-100)
+  
+  // 工具箱展开状态
+  const [showToolbox, setShowToolbox] = useState(false);
+  
   const [initializationSteps, setInitializationSteps] = useState({
     roomDataLoaded: false,
     editorMounted: false,
@@ -126,6 +141,31 @@ const CollaborativeEditor: React.FC = () => {
   useEffect(() => {
     console.log('🔄 Initialization steps changed:', initializationSteps);
   }, [initializationSteps]);
+
+  // 初始化透明度（仅在 Electron 环境中）
+  useEffect(() => {
+    if (isElectron && window.api && typeof window.api.getOpacity === 'function') {
+      // 从主进程获取当前透明度
+      window.api.getOpacity().then((currentOpacity: number) => {
+        setOpacity(Math.round(currentOpacity * 100));
+        console.log('💡 初始透明度:', currentOpacity);
+      }).catch((err: Error) => {
+        console.error('获取透明度失败:', err);
+      });
+      
+      // 从本地存储加载透明度设置
+      const savedOpacity = localStorage.getItem('window-opacity');
+      if (savedOpacity) {
+        const opacityValue = parseFloat(savedOpacity);
+        window.api.setOpacity(opacityValue).then(() => {
+          setOpacity(Math.round(opacityValue * 100));
+          console.log('💡 从本地存储恢复透明度:', opacityValue);
+        }).catch((err: Error) => {
+          console.error('设置透明度失败:', err);
+        });
+      }
+    }
+  }, [isElectron]);
 
   // 监听穿透模式状态变化
   useEffect(() => {
@@ -1936,22 +1976,23 @@ const CollaborativeEditor: React.FC = () => {
         lineNumber: e.position.lineNumber,
         column: e.position.column,
       };
-      console.log('🎯 My cursor position changed:', position);
-      console.log('🎯 My user info:', { id: user?.id, username: user?.username });
-      console.log('🎯 Room ID:', roomId);
-      console.log('🎯 Socket connected:', socketService.isConnected);
-      console.log('🎯 Is updating from remote:', isUpdatingFromRemote.current);
+      // 🔧 性能优化：减少日志输出，避免翻页卡顿
+      // console.log('🎯 My cursor position changed:', position);
+      // console.log('🎯 My user info:', { id: user?.id, username: user?.username });
+      // console.log('🎯 Room ID:', roomId);
+      // console.log('🎯 Socket connected:', socketService.isConnected);
+      // console.log('🎯 Is updating from remote:', isUpdatingFromRemote.current);
 
       // 多重检查：确保不是远程更新触发的光标变化
       if (isUpdatingFromRemote.current) {
-        console.log('🎯 ❌ SKIPPING: This is a remote update, not sending cursor position');
+        // console.log('🎯 ❌ SKIPPING: This is a remote update, not sending cursor position');
         return;
       }
 
       // 检查是否在最近的远程更新时间窗口内（优化为更短的时间窗口）
       const timeSinceLastRemoteUpdate = Date.now() - lastRemoteUpdateTime.current;
       if (timeSinceLastRemoteUpdate < 800) { // 减少到800ms，提高响应性
-        console.log('🎯 ❌ SKIPPING: Too soon after remote update, likely caused by Yjs sync');
+        // console.log('🎯 ❌ SKIPPING: Too soon after remote update, likely caused by Yjs sync');
         return;
       }
 
@@ -1959,18 +2000,17 @@ const CollaborativeEditor: React.FC = () => {
       setTimeout(() => {
         // 再次检查是否仍然不是远程更新
         if (!isUpdatingFromRemote.current && socketService.isConnected) {
-          console.log('🎯 ✅ Sending MY cursor position to server (user action)...');
+          // console.log('🎯 ✅ Sending MY cursor position to server (user action)...');
           socketService.sendCursorPosition(roomId!, position);
         } else {
-          console.log('🎯 ❌ SKIPPING delayed cursor send: remote update flag is set or socket disconnected');
+          // console.log('🎯 ❌ SKIPPING delayed cursor send: remote update flag is set or socket disconnected');
         }
       }, 50); // 50ms延迟，让Yjs更新完成
     });
 
     // Handle keyboard input for typing status - 更可靠的方法
     editor.onKeyDown((e: any) => {
-      console.log('⌨️ Key pressed:', e.keyCode, e.code);
-
+      // 🔧 性能优化：先快速过滤非打字键，避免不必要的处理和日志输出
       // 只有在输入可见字符或删除键时才认为是打字
       const isTypingKey = (
         (e.keyCode >= 32 && e.keyCode <= 126) || // 可见字符
@@ -1980,16 +2020,20 @@ const CollaborativeEditor: React.FC = () => {
         e.keyCode === 9 // Tab
       );
 
+      // 如果不是打字键（如翻页键、方向键等），立即返回，不执行任何操作
       if (!isTypingKey) {
-        console.log('⌨️ ❌ Not a typing key, skipping');
         return;
       }
 
+      // 只为打字键输出日志
+      // console.log('⌨️ Key pressed:', e.keyCode, e.code);
+
       const now = Date.now();
-      console.log('⌨️ ===== USER IS TYPING (KEYBOARD) =====');
-      console.log('⌨️ Detected user keyboard input');
-      console.log('⌨️ My user info:', { id: user?.id, username: user?.username });
-      console.log('⌨️ Key code:', e.keyCode);
+      // 🔧 减少日志输出，提升性能
+      // console.log('⌨️ ===== USER IS TYPING (KEYBOARD) =====');
+      // console.log('⌨️ Detected user keyboard input');
+      // console.log('⌨️ My user info:', { id: user?.id, username: user?.username });
+      // console.log('⌨️ Key code:', e.keyCode);
 
       // 防抖：如果距离上次发送不到500ms，则取消之前的定时器并重新设置
       if (typingDebounceTimeout.current) {
@@ -2002,15 +2046,15 @@ const CollaborativeEditor: React.FC = () => {
 
       const sendTypingEvent = () => {
         if (socketService.isConnected && roomId && user) {
-          console.log('⌨️ ✅ Sending typing event to other users');
+          // console.log('⌨️ ✅ Sending typing event to other users');
           socketService.sendUserTyping(roomId);
           lastTypingTime.current = Date.now();
 
           // 同时在本地显示自己的打字状态
-          console.log('⌨️ ✅ Adding myself to local typing users');
+          // console.log('⌨️ ✅ Adding myself to local typing users');
           setTypingUsers(prev => {
             const newSet = new Set(prev).add(user.id);
-            console.log('⌨️ Local typing users after adding myself:', Array.from(newSet));
+            // console.log('⌨️ Local typing users after adding myself:', Array.from(newSet));
             return newSet;
           });
 
@@ -2021,11 +2065,11 @@ const CollaborativeEditor: React.FC = () => {
 
           // 设置新的超时，5秒后移除自己的打字状态
           const timeout = setTimeout(() => {
-            console.log('⌨️ Removing my own typing status');
+            // console.log('⌨️ Removing my own typing status');
             setTypingUsers(prev => {
               const newSet = new Set(prev);
               newSet.delete(user.id);
-              console.log('⌨️ Remaining typing users after removing myself:', Array.from(newSet));
+              // console.log('⌨️ Remaining typing users after removing myself:', Array.from(newSet));
               return newSet;
             });
             typingTimeout.current.delete(user.id);
@@ -2036,17 +2080,17 @@ const CollaborativeEditor: React.FC = () => {
       };
 
       if (shouldSendImmediately) {
-        console.log('⌨️ Sending immediately (>1s since last)');
+        // console.log('⌨️ Sending immediately (>1s since last)');
         sendTypingEvent();
       } else {
-        console.log('⌨️ Debouncing typing event (500ms delay)');
+        // console.log('⌨️ Debouncing typing event (500ms delay)');
         typingDebounceTimeout.current = setTimeout(() => {
           sendTypingEvent();
           typingDebounceTimeout.current = null;
         }, 500);
       }
 
-      console.log('⌨️ ===== END TYPING EVENT PROCESSING =====');
+      // console.log('⌨️ ===== END TYPING EVENT PROCESSING =====');
     });
 
     // Handle selection changes
@@ -2061,12 +2105,13 @@ const CollaborativeEditor: React.FC = () => {
           endLineNumber: selection.endLineNumber,
           endColumn: selection.endColumn,
         };
-        console.log('📝 Sending selection change:', selectionData);
+        // 🔧 性能优化：减少日志输出
+        // console.log('📝 Sending selection change:', selectionData);
         socketService.sendSelectionChange(roomId!, selectionData);
 
       } else {
         // 选择区域为空时，清除该用户的选择
-        console.log('🗑️ Sending selection clear');
+        // console.log('🗑️ Sending selection clear');
         socketService.sendSelectionClear(roomId!);
       }
     });
@@ -2191,6 +2236,110 @@ const CollaborativeEditor: React.FC = () => {
         : t('editor.themeLight') || '已切换到浅色主题'
     );
   };
+
+  // 📝 处理字体大小变化
+  const handleFontSizeChange = useCallback((value: number) => {
+    setEditorFontSize(value);
+    
+    // 保存到 localStorage
+    localStorage.setItem('editor_fontSize', value.toString());
+    
+    // 更新 Monaco 编辑器字体大小
+    if (editorRef.current) {
+      editorRef.current.updateOptions({ fontSize: value });
+    }
+    
+    // 日志记录
+    console.log(`📝 编辑器字体大小已更改: ${value}px`);
+  }, []);
+
+  // 💡 处理透明度变化
+  const handleOpacityChange = (value: number) => {
+    setOpacity(value);
+    const opacityValue = value / 100;
+    
+    if (window.api && typeof window.api.setOpacity === 'function') {
+      window.api.setOpacity(opacityValue).then(() => {
+        // 保存到本地存储
+        localStorage.setItem('window-opacity', opacityValue.toString());
+        console.log('💡 透明度已设置为:', opacityValue);
+      }).catch((err: Error) => {
+        console.error('设置透明度失败:', err);
+      });
+    }
+  };
+
+  // 🔄 重置所有设置
+  const handleResetSettings = () => {
+    Modal.confirm({
+      title: t('toolbox.resetConfirmTitle'),
+      content: t('toolbox.resetConfirmContent'),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: () => {
+        // 重置字体大小
+        const defaultFontSize = 14;
+        localStorage.removeItem('editor_fontSize');
+        setEditorFontSize(defaultFontSize);
+        if (editorRef.current) {
+          editorRef.current.updateOptions({ fontSize: defaultFontSize });
+        }
+        
+        // 重置透明度
+        localStorage.removeItem('window-opacity');
+        setOpacity(100);
+        if (window.api && typeof window.api.setOpacity === 'function') {
+          window.api.setOpacity(1.0);
+        }
+        
+        // 重置主题
+        const defaultTheme = 'vs-dark';
+        localStorage.removeItem('editor_theme');
+        setEditorTheme(defaultTheme);
+        if (monacoRef.current && editorRef.current) {
+          monacoRef.current.editor.setTheme(defaultTheme);
+        }
+        
+        message.success(t('toolbox.resetSuccess'));
+        console.log('🔄 所有设置已重置');
+      }
+    });
+  };
+
+  // 监听字体大小调整快捷键
+  useEffect(() => {
+    if (!isElectron || !window.electron || !window.electron.ipcRenderer) {
+      return;
+    }
+
+    const handleIncreaseFontSize = () => {
+      const newSize = Math.min(30, editorFontSize + 2);
+      handleFontSizeChange(newSize);
+      console.log('📝 快捷键增大字体:', newSize);
+    };
+
+    const handleDecreaseFontSize = () => {
+      const newSize = Math.max(10, editorFontSize - 2);
+      handleFontSizeChange(newSize);
+      console.log('📝 快捷键减小字体:', newSize);
+    };
+
+    const handleResetFontSize = () => {
+      const defaultSize = 14;
+      handleFontSizeChange(defaultSize);
+      console.log('📝 快捷键重置字体:', defaultSize);
+    };
+
+    window.electron.ipcRenderer.on('increase-font-size', handleIncreaseFontSize);
+    window.electron.ipcRenderer.on('decrease-font-size', handleDecreaseFontSize);
+    window.electron.ipcRenderer.on('reset-font-size', handleResetFontSize);
+
+    return () => {
+      window.electron.ipcRenderer.removeListener('increase-font-size', handleIncreaseFontSize);
+      window.electron.ipcRenderer.removeListener('decrease-font-size', handleDecreaseFontSize);
+      window.electron.ipcRenderer.removeListener('reset-font-size', handleResetFontSize);
+    };
+  }, [editorFontSize, isElectron, handleFontSizeChange]);
 
   const handleSave = async () => {
     console.log('🔄 保存按钮被点击');
@@ -2620,18 +2769,28 @@ const CollaborativeEditor: React.FC = () => {
             </Button>
           </Tooltip>
           <div style={{display:'flex',alignItems: 'center'}}>
-            <Title level={4} style={{ margin: 0, lineHeight: 1.2 }}>
-              {room?.name}
-            </Title>
             {room?.roomCode && (
               <div style={{
-                fontSize: '12px',
-                marginLeft: '8px',
-                color: '#666',
-                marginTop: '2px',
-                fontFamily: 'monospace'
+                display: 'flex',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: '6px'
               }}>
-                {t('room.roomCode')}: {room.roomCode}
+                <div style={{
+                  fontSize: '10px',
+                  color: '#999',
+                  fontWeight: 400
+                }}>
+                  {t('room.roomCode')}
+                </div>
+                <div style={{
+                  fontSize: '10px',
+                  color: '#666',
+                  fontFamily: 'monospace',
+                  fontWeight: 500
+                }}>
+                  {room.roomCode}
+                </div>
               </div>
             )}
           </div>
@@ -2831,7 +2990,7 @@ const CollaborativeEditor: React.FC = () => {
               theme={editorTheme}
               onMount={handleEditorDidMount}
               options={{
-              fontSize: 14,
+              fontSize: editorFontSize,
               minimap: { enabled: true },
               wordWrap: 'on',
               automaticLayout: true,
@@ -2879,6 +3038,145 @@ const CollaborativeEditor: React.FC = () => {
               </span>
             </div>
           )}
+
+          {/* 🧰 工具箱 */}
+          <>
+            {/* 工具箱按钮 */}
+            <div
+              style={{
+                position: 'fixed',
+                bottom: '20px',
+                right: showToolbox ? '240px' : '10px',
+                zIndex: 10000,
+                transition: 'right 0.3s ease',
+                cursor: 'pointer',
+                backgroundColor: '#1890ff',
+                color: 'white',
+                width: '40px',
+                height: '40px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                opacity: showToolbox ? 0.7 : 1,
+              }}
+              onClick={() => setShowToolbox(!showToolbox)}
+              title={t('toolbox.title')}
+            >
+              <ToolOutlined style={{ fontSize: '18px' }} />
+            </div>
+
+            {/* 工具箱面板 */}
+            {showToolbox && (
+              <Card
+                size="small"
+                title={`🧰 ${t('toolbox.title')}`}
+                style={{
+                  position: 'fixed',
+                  bottom: '20px',
+                  right: '10px',
+                  zIndex: 9999,
+                  width: '220px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                }}
+                styles={{
+                  body: {
+                    padding: '16px',
+                  }
+                }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {/* 字体大小控制 */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ 
+                      marginBottom: '4px'
+                    }}>
+                      <span style={{ fontSize: '13px', fontWeight: '500', color: '#333' }}>
+                        {t('toolbox.fontSize')}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '12px', color: '#666' }}>{t('toolbox.small')}</span>
+                      <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#52c41a' }}>
+                        {editorFontSize}px
+                      </span>
+                      <span style={{ fontSize: '12px', color: '#666' }}>{t('toolbox.large')}</span>
+                    </div>
+                    <Slider
+                      min={10}
+                      max={30}
+                      value={editorFontSize}
+                      onChange={handleFontSizeChange}
+                      tooltip={{ formatter: (value) => `${value}px` }}
+                    />
+                    <div style={{ fontSize: '11px', color: '#999' }}>
+                      {t('toolbox.fontSizeHint')}
+                    </div>
+                    {isElectron && (
+                      <div style={{ fontSize: '11px', color: '#999' }}>
+                        {t('toolbox.fontSizeShortcut')}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 透明度控制（仅在 Electron 环境中显示） */}
+                  {isElectron && (
+                    <>
+                      <div style={{ 
+                        height: '1px', 
+                        background: 'linear-gradient(to right, transparent, #e0e0e0, transparent)',
+                        margin: '0 -4px'
+                      }} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div style={{ 
+                          marginBottom: '4px'
+                        }}>
+                          <span style={{ fontSize: '13px', fontWeight: '500', color: '#333' }}>
+                            {t('toolbox.windowOpacity')}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ fontSize: '12px', color: '#666' }}>{t('toolbox.opaque')}</span>
+                          <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#1890ff' }}>
+                            {opacity}%
+                          </span>
+                          <span style={{ fontSize: '12px', color: '#666' }}>{t('toolbox.transparent')}</span>
+                        </div>
+                        <Slider
+                          min={10}
+                          max={100}
+                          value={opacity}
+                          onChange={handleOpacityChange}
+                          tooltip={{ formatter: (value) => `${value}%` }}
+                        />
+                        <div style={{ fontSize: '11px', color: '#999' }}>
+                          {t('toolbox.opacityShortcut')}
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* 重置按钮 */}
+                  <div style={{ 
+                    borderTop: '1px solid #e0e0e0',
+                    paddingTop: '12px',
+                    marginTop: '8px'
+                  }}>
+                    <Button 
+                      icon={<ReloadOutlined />}
+                      onClick={handleResetSettings}
+                      block
+                      type="default"
+                      danger
+                    >
+                      {t('toolbox.resetSettings')}
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            )}
+          </>
         </Content>
 
       </Layout>

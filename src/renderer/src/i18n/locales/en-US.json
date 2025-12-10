@@ -184,6 +184,22 @@
     "endRoomHint": "End room, all members will be removed",
     "shareRoomHint": "Copy room code to share with others"
   },
+  "toolbox": {
+    "title": "Toolbox",
+    "fontSize": "Font Size",
+    "small": "Small",
+    "large": "Large",
+    "fontSizeHint": "Adjust code editor font size",
+    "fontSizeShortcut": "Shortcut: Cmd/Ctrl + +/- (adjust), Cmd/Ctrl + 0 (reset)",
+    "windowOpacity": "Window Opacity",
+    "opaque": "Opaque",
+    "transparent": "Transparent",
+    "opacityShortcut": "Shortcut: Cmd/Ctrl + [ / ]",
+    "resetSettings": "Reset All Settings",
+    "resetConfirmTitle": "Confirm Reset",
+    "resetConfirmContent": "Are you sure you want to reset all settings to default values? This will reset font size, window opacity and theme settings.",
+    "resetSuccess": "All settings have been reset to default values"
+  },
   "settings": {
     "settings": "Settings",
     "language": "Language",

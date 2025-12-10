@@ -187,6 +187,22 @@
     "endRoomHint": "结束房间，所有成员将被退出",
     "shareRoomHint": "复制房间号，分享给他人加入"
   },
+  "toolbox": {
+    "title": "工具箱",
+    "fontSize": "字体大小",
+    "small": "小",
+    "large": "大",
+    "fontSizeHint": "调整代码编辑器字体大小",
+    "fontSizeShortcut": "快捷键: Cmd/Ctrl + +/- (调整), Cmd/Ctrl + 0 (重置)",
+    "windowOpacity": "窗口透明度",
+    "opaque": "不透明",
+    "transparent": "透明",
+    "opacityShortcut": "快捷键: Cmd/Ctrl + [ / ]",
+    "resetSettings": "重置所有设置",
+    "resetConfirmTitle": "确认重置",
+    "resetConfirmContent": "确定要重置所有设置为默认值吗？这将重置字体大小、窗口透明度和主题设置。",
+    "resetSuccess": "所有设置已重置为默认值"
+  },
   "settings": {
     "settings": "设置",
     "language": "语言",

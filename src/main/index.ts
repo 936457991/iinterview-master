@@ -217,31 +217,18 @@ function registerGlobalShortcuts(): void {
       }
     })
 
-    // 键盘滚动快捷键 - 基础滚动
-    const SCROLL_AMOUNT = 50
-    const FAST_SCROLL_AMOUNT = 200
+    // 键盘滚动快捷键 - 基础滚动（增大滚动量以提高响应性）
+    const SCROLL_AMOUNT = 150  // 从 50 增加到 150
+    const FAST_SCROLL_AMOUNT = 500  // 从 200 增加到 500
 
     // Cmd/Ctrl + Shift + ↑: Monaco编辑器向上滚动
     globalShortcut.register('CommandOrControl+Shift+Up', () => {
       if (mainWindow) {
         mainWindow.webContents.executeJavaScript(`
-          (function() {
-            // 尝试找到Monaco编辑器实例
-            const editorElements = document.querySelectorAll('.monaco-editor');
-            if (editorElements.length > 0) {
-              // 获取全局的Monaco编辑器实例
-              if (window.monacoEditorInstance) {
-                const editor = window.monacoEditorInstance;
-                const scrollTop = editor.getScrollTop();
-                editor.setScrollTop(Math.max(0, scrollTop - ${SCROLL_AMOUNT}));
-                return 'Monaco编辑器向上滚动';
-              }
-            }
-            // 如果没有Monaco编辑器，则滚动窗口
-            window.scrollBy(0, -${SCROLL_AMOUNT});
-            return '窗口向上滚动';
-          })()
-        `).then(result => console.log(`⬆️ ${result} ${SCROLL_AMOUNT}px`))
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollTop(Math.max(0, window.monacoEditorInstance.getScrollTop() - ${SCROLL_AMOUNT})) :
+            window.scrollBy(0, -${SCROLL_AMOUNT})
+        `)
       }
     })
 
@@ -249,20 +236,10 @@ function registerGlobalShortcuts(): void {
     globalShortcut.register('CommandOrControl+Shift+Down', () => {
       if (mainWindow) {
         mainWindow.webContents.executeJavaScript(`
-          (function() {
-            const editorElements = document.querySelectorAll('.monaco-editor');
-            if (editorElements.length > 0) {
-              if (window.monacoEditorInstance) {
-                const editor = window.monacoEditorInstance;
-                const scrollTop = editor.getScrollTop();
-                editor.setScrollTop(scrollTop + ${SCROLL_AMOUNT});
-                return 'Monaco编辑器向下滚动';
-              }
-            }
-            window.scrollBy(0, ${SCROLL_AMOUNT});
-            return '窗口向下滚动';
-          })()
-        `).then(result => console.log(`⬇️ ${result} ${SCROLL_AMOUNT}px`))
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollTop(window.monacoEditorInstance.getScrollTop() + ${SCROLL_AMOUNT}) :
+            window.scrollBy(0, ${SCROLL_AMOUNT})
+        `)
       }
     })
 
@@ -270,20 +247,10 @@ function registerGlobalShortcuts(): void {
     globalShortcut.register('CommandOrControl+Shift+Left', () => {
       if (mainWindow) {
         mainWindow.webContents.executeJavaScript(`
-          (function() {
-            const editorElements = document.querySelectorAll('.monaco-editor');
-            if (editorElements.length > 0) {
-              if (window.monacoEditorInstance) {
-                const editor = window.monacoEditorInstance;
-                const scrollLeft = editor.getScrollLeft();
-                editor.setScrollLeft(Math.max(0, scrollLeft - ${SCROLL_AMOUNT}));
-                return 'Monaco编辑器向左滚动';
-              }
-            }
-            window.scrollBy(-${SCROLL_AMOUNT}, 0);
-            return '窗口向左滚动';
-          })()
-        `).then(result => console.log(`⬅️ ${result} ${SCROLL_AMOUNT}px`))
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollLeft(Math.max(0, window.monacoEditorInstance.getScrollLeft() - ${SCROLL_AMOUNT})) :
+            window.scrollBy(-${SCROLL_AMOUNT}, 0)
+        `)
       }
     })
 
@@ -291,20 +258,10 @@ function registerGlobalShortcuts(): void {
     globalShortcut.register('CommandOrControl+Shift+Right', () => {
       if (mainWindow) {
         mainWindow.webContents.executeJavaScript(`
-          (function() {
-            const editorElements = document.querySelectorAll('.monaco-editor');
-            if (editorElements.length > 0) {
-              if (window.monacoEditorInstance) {
-                const editor = window.monacoEditorInstance;
-                const scrollLeft = editor.getScrollLeft();
-                editor.setScrollLeft(scrollLeft + ${SCROLL_AMOUNT});
-                return 'Monaco编辑器向右滚动';
-              }
-            }
-            window.scrollBy(${SCROLL_AMOUNT}, 0);
-            return '窗口向右滚动';
-          })()
-        `).then(result => console.log(`➡️ ${result} ${SCROLL_AMOUNT}px`))
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollLeft(window.monacoEditorInstance.getScrollLeft() + ${SCROLL_AMOUNT}) :
+            window.scrollBy(${SCROLL_AMOUNT}, 0)
+        `)
       }
     })
 
@@ -313,20 +270,10 @@ function registerGlobalShortcuts(): void {
     globalShortcut.register('CommandOrControl+Alt+Shift+Up', () => {
       if (mainWindow) {
         mainWindow.webContents.executeJavaScript(`
-          (function() {
-            const editorElements = document.querySelectorAll('.monaco-editor');
-            if (editorElements.length > 0) {
-              if (window.monacoEditorInstance) {
-                const editor = window.monacoEditorInstance;
-                const scrollTop = editor.getScrollTop();
-                editor.setScrollTop(Math.max(0, scrollTop - ${FAST_SCROLL_AMOUNT}));
-                return 'Monaco编辑器快速向上滚动';
-              }
-            }
-            window.scrollBy(0, -${FAST_SCROLL_AMOUNT});
-            return '窗口快速向上滚动';
-          })()
-        `).then(result => console.log(`⬆️⬆️ ${result} ${FAST_SCROLL_AMOUNT}px`))
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollTop(Math.max(0, window.monacoEditorInstance.getScrollTop() - ${FAST_SCROLL_AMOUNT})) :
+            window.scrollBy(0, -${FAST_SCROLL_AMOUNT})
+        `)
       }
     })
 
@@ -334,20 +281,10 @@ function registerGlobalShortcuts(): void {
     globalShortcut.register('CommandOrControl+Alt+Shift+Down', () => {
       if (mainWindow) {
         mainWindow.webContents.executeJavaScript(`
-          (function() {
-            const editorElements = document.querySelectorAll('.monaco-editor');
-            if (editorElements.length > 0) {
-              if (window.monacoEditorInstance) {
-                const editor = window.monacoEditorInstance;
-                const scrollTop = editor.getScrollTop();
-                editor.setScrollTop(scrollTop + ${FAST_SCROLL_AMOUNT});
-                return 'Monaco编辑器快速向下滚动';
-              }
-            }
-            window.scrollBy(0, ${FAST_SCROLL_AMOUNT});
-            return '窗口快速向下滚动';
-          })()
-        `).then(result => console.log(`⬇️⬇️ ${result} ${FAST_SCROLL_AMOUNT}px`))
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollTop(window.monacoEditorInstance.getScrollTop() + ${FAST_SCROLL_AMOUNT}) :
+            window.scrollBy(0, ${FAST_SCROLL_AMOUNT})
+        `)
       }
     })
 
@@ -355,20 +292,10 @@ function registerGlobalShortcuts(): void {
     globalShortcut.register('CommandOrControl+Alt+Shift+Left', () => {
       if (mainWindow) {
         mainWindow.webContents.executeJavaScript(`
-          (function() {
-            const editorElements = document.querySelectorAll('.monaco-editor');
-            if (editorElements.length > 0) {
-              if (window.monacoEditorInstance) {
-                const editor = window.monacoEditorInstance;
-                const scrollLeft = editor.getScrollLeft();
-                editor.setScrollLeft(Math.max(0, scrollLeft - ${FAST_SCROLL_AMOUNT}));
-                return 'Monaco编辑器快速向左滚动';
-              }
-            }
-            window.scrollBy(-${FAST_SCROLL_AMOUNT}, 0);
-            return '窗口快速向左滚动';
-          })()
-        `).then(result => console.log(`⬅️⬅️ ${result} ${FAST_SCROLL_AMOUNT}px`))
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollLeft(Math.max(0, window.monacoEditorInstance.getScrollLeft() - ${FAST_SCROLL_AMOUNT})) :
+            window.scrollBy(-${FAST_SCROLL_AMOUNT}, 0)
+        `)
       }
     })
 
@@ -376,20 +303,10 @@ function registerGlobalShortcuts(): void {
     globalShortcut.register('CommandOrControl+Alt+Shift+Right', () => {
       if (mainWindow) {
         mainWindow.webContents.executeJavaScript(`
-          (function() {
-            const editorElements = document.querySelectorAll('.monaco-editor');
-            if (editorElements.length > 0) {
-              if (window.monacoEditorInstance) {
-                const editor = window.monacoEditorInstance;
-                const scrollLeft = editor.getScrollLeft();
-                editor.setScrollLeft(scrollLeft + ${FAST_SCROLL_AMOUNT});
-                return 'Monaco编辑器快速向右滚动';
-              }
-            }
-            window.scrollBy(${FAST_SCROLL_AMOUNT}, 0);
-            return '窗口快速向右滚动';
-          })()
-        `).then(result => console.log(`➡️➡️ ${result} ${FAST_SCROLL_AMOUNT}px`))
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollLeft(window.monacoEditorInstance.getScrollLeft() + ${FAST_SCROLL_AMOUNT}) :
+            window.scrollBy(${FAST_SCROLL_AMOUNT}, 0)
+        `)
       }
     })
 
@@ -397,32 +314,44 @@ function registerGlobalShortcuts(): void {
     // Cmd/Ctrl + Shift + Home: 滚动到顶部
     globalShortcut.register('CommandOrControl+Shift+Home', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript('window.scrollTo(0, 0)')
-        console.log('🔝 滚动到顶部')
+        mainWindow.webContents.executeJavaScript(`
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollTop(0) :
+            window.scrollTo(0, 0)
+        `)
       }
     })
 
     // Cmd/Ctrl + Shift + End: 滚动到底部
     globalShortcut.register('CommandOrControl+Shift+End', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript('window.scrollTo(0, document.body.scrollHeight)')
-        console.log('🔚 滚动到底部')
+        mainWindow.webContents.executeJavaScript(`
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollTop(window.monacoEditorInstance.getScrollHeight()) :
+            window.scrollTo(0, document.body.scrollHeight)
+        `)
       }
     })
 
     // Cmd/Ctrl + Shift + PageUp: 向上滚动一页
     globalShortcut.register('CommandOrControl+Shift+PageUp', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript('window.scrollBy(0, -window.innerHeight * 0.8)')
-        console.log('📄 向上滚动一页')
+        mainWindow.webContents.executeJavaScript(`
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollTop(Math.max(0, window.monacoEditorInstance.getScrollTop() - window.monacoEditorInstance.getLayoutInfo().height * 0.8)) :
+            window.scrollBy(0, -window.innerHeight * 0.8)
+        `)
       }
     })
 
     // Cmd/Ctrl + Shift + PageDown: 向下滚动一页
     globalShortcut.register('CommandOrControl+Shift+PageDown', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript('window.scrollBy(0, window.innerHeight * 0.8)')
-        console.log('📄 向下滚动一页')
+        mainWindow.webContents.executeJavaScript(`
+          window.monacoEditorInstance ? 
+            window.monacoEditorInstance.setScrollTop(window.monacoEditorInstance.getScrollTop() + window.monacoEditorInstance.getLayoutInfo().height * 0.8) :
+            window.scrollBy(0, window.innerHeight * 0.8)
+        `)
       }
     })
 
@@ -434,12 +363,37 @@ function registerGlobalShortcuts(): void {
       }
     })
 
+    // Cmd/Ctrl + =: 增大字体
+    globalShortcut.register('CommandOrControl+=', () => {
+      if (mainWindow) {
+        console.log('📝 增大字体')
+        mainWindow.webContents.send('increase-font-size')
+      }
+    })
+
+    // Cmd/Ctrl + -: 减小字体
+    globalShortcut.register('CommandOrControl+-', () => {
+      if (mainWindow) {
+        console.log('📝 减小字体')
+        mainWindow.webContents.send('decrease-font-size')
+      }
+    })
+
+    // Cmd/Ctrl + 0: 重置字体大小
+    globalShortcut.register('CommandOrControl+0', () => {
+      if (mainWindow) {
+        console.log('📝 重置字体大小')
+        mainWindow.webContents.send('reset-font-size')
+      }
+    })
+
     console.log('全局快捷键注册成功')
     console.log('⌨️ Monaco编辑器键盘滚动快捷键（主进程）:')
     console.log('  基础滚动: Ctrl/Cmd + Shift + 方向键 (50px)')
     console.log('  快速滚动: Ctrl/Cmd + Alt + Shift + 方向键 (200px)')
     console.log('  页面跳转: Ctrl/Cmd + Shift + Home/End/PageUp/PageDown')
     console.log('  💡 优先控制Monaco编辑器，无编辑器时回退到窗口滚动')
+    console.log('📝 字体大小调整: Ctrl/Cmd + +/- (增大/减小), Ctrl/Cmd + 0 (重置)')
   } catch (error) {
     console.error('注册快捷键失败:', error)
   }
@@ -469,6 +423,26 @@ app.whenReady().then(() => {
   ipcMain.handle('get-mouse-through-mode', () => {
     console.log('📡 主进程：获取穿透模式状态请求，当前状态:', isMouseThrough)
     return isMouseThrough
+  })
+  
+  // 透明度相关 IPC 处理器
+  ipcMain.handle('get-opacity', () => {
+    if (mainWindow) {
+      const opacity = mainWindow.getOpacity()
+      console.log('📡 主进程：获取透明度请求，当前透明度:', opacity)
+      return opacity
+    }
+    return 1.0
+  })
+  
+  ipcMain.handle('set-opacity', (_event, opacity: number) => {
+    if (mainWindow) {
+      const clampedOpacity = Math.max(0.1, Math.min(1.0, opacity))
+      mainWindow.setOpacity(clampedOpacity)
+      console.log('📡 主进程：设置透明度为:', clampedOpacity)
+      return clampedOpacity
+    }
+    return 1.0
   })
 
   createWindow()
