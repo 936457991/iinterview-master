@@ -8,6 +8,7 @@ import {
   Space,
   Button,
   Select,
+  Tag,
   message,
   Modal,
   Tooltip,
@@ -18,11 +19,11 @@ import {
 import {
   ArrowLeftOutlined,
   SaveOutlined,
-  ShareAltOutlined,
   SyncOutlined,
   ExclamationCircleOutlined,
   ToolOutlined,
   ReloadOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -48,6 +49,8 @@ interface RoomData {
   description: string;
   language: string;
   content: string;
+  coderpadUrl?: string;
+  coderpadExpiresAt?: string;
   roomCode?: string; // 添加房间号字段
   members: Array<{
     id: string;
@@ -101,6 +104,7 @@ const CollaborativeEditor: React.FC = () => {
   const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
   const [currentLanguage, setCurrentLanguage] = useState('javascript');
   const [loading, setLoading] = useState(true);
+  const [useExternalEditor, setUseExternalEditor] = useState(false);
   // 穿透模式状态
   const [isMouseThroughMode, setIsMouseThroughMode] = useState(false);
   
@@ -116,8 +120,14 @@ const CollaborativeEditor: React.FC = () => {
   // 📝 编辑器字体大小状态
   const [editorFontSize, setEditorFontSize] = useState<number>(() => {
     // 从 localStorage 读取用户的字体大小偏好
+    const clamp = (n: number) => Math.min(30, Math.max(10, n));
     const savedFontSize = localStorage.getItem('editor_fontSize');
-    return savedFontSize ? parseInt(savedFontSize, 10) : 14; // 默认14px
+    const parsed = savedFontSize ? Number.parseInt(savedFontSize, 10) : NaN;
+    const normalized = Number.isFinite(parsed) ? clamp(parsed) : 14; // 默认14px
+    if (savedFontSize && String(parsed) !== String(normalized)) {
+      localStorage.setItem('editor_fontSize', normalized.toString());
+    }
+    return normalized;
   });
   
   // 透明度控制状态
@@ -863,14 +873,16 @@ const CollaborativeEditor: React.FC = () => {
   useEffect(() => {
     if (!roomId || !user) return;
 
-    // 🔧 并行初始化，提高加载速度
-    Promise.all([
-      loadRoomData(),
-      initializeCollaboration()
-    ]).catch((error) => {
-      console.error('🚨 Initialization failed:', error);
-      setLoading(false); // 即使失败也要清除加载状态
-    });
+    // 🔧 先加载房间数据，再按需初始化协作（外部链接房间可跳过 Yjs）
+    (async () => {
+      try {
+        const roomData = await loadRoomData();
+        await initializeCollaboration({ skipYjs: !!roomData?.coderpadUrl });
+      } catch (error) {
+        console.error('🚨 Initialization failed:', error);
+        setLoading(false); // 即使失败也要清除加载状态
+      }
+    })();
 
     // 🔧 添加超时保护，防止loading状态一直不消失
     const loadingTimeout = setTimeout(() => {
@@ -889,7 +901,32 @@ const CollaborativeEditor: React.FC = () => {
     };
   }, [roomId, user]);
 
-  const loadRoomData = async () => {
+  useEffect(() => {
+    if (!isElectron || !window.electron || !window.electron.ipcRenderer) return;
+
+    const url = room?.coderpadUrl;
+    if (useExternalEditor && url) {
+      // 固定顶部条高度（工具箱作为浮层，不影响 BrowserView bounds）
+      // 预留高度要与顶部工具条实际高度一致，否则会看到“菜单栏与代码页面之间的空白间距”
+      const FIXED_TOP_OFFSET = 32;
+
+      window.electron.ipcRenderer.invoke('external-editor:set', {
+        url,
+        top: FIXED_TOP_OFFSET,
+        right: 0,
+        bottom: 0,
+        left: 0,
+      }).catch(() => {});
+    } else {
+      window.electron.ipcRenderer.invoke('external-editor:clear').catch(() => {});
+    }
+
+    return () => {
+      window.electron.ipcRenderer.invoke('external-editor:clear').catch(() => {});
+    };
+  }, [isElectron, useExternalEditor, room?.coderpadUrl]);
+
+  const loadRoomData = async (): Promise<RoomData | null> => {
     try {
       console.log('🔄 Loading room data...');
       
@@ -897,6 +934,7 @@ const CollaborativeEditor: React.FC = () => {
       const roomData = response.data;
       setRoom(roomData);
       setCurrentLanguage(roomData.language);
+      setUseExternalEditor(!!roomData.coderpadUrl);
       
       // 🔧 标记房间数据加载完成
       setInitializationSteps(prev => ({
@@ -905,6 +943,7 @@ const CollaborativeEditor: React.FC = () => {
       }));
       
       console.log('✅ Room data loaded successfully');
+      return roomData;
     } catch (error: any) {
       console.error('❌ 加载房间数据失败:', error);
       
@@ -921,16 +960,23 @@ const CollaborativeEditor: React.FC = () => {
             navigate('/dashboard');
           }
         });
-        return;
+        return null;
       }
       
       // 其他错误
       message.error(t('editor.loadRoomFailed'));
       navigate('/dashboard');
+      return null;
     }
   };
 
-  const initializeCollaboration = async () => {
+  const initializeCollaboration = async (options?: { skipYjs?: boolean }) => {
+    const skipYjs = !!options?.skipYjs;
+    if (skipYjs) {
+      setYjsConnectionStatus('connected');
+      setShowReconnectingBar(false);
+      return;
+    }
     // Initialize Yjs document
     yjsDocRef.current = new Y.Doc();
 
@@ -2189,6 +2235,12 @@ const CollaborativeEditor: React.FC = () => {
   };
 
   const handleLanguageChange = async (language: string) => {
+    // 只有创建者或系统管理员允许修改房间语言（属于房间信息）
+    if (!(isRoomAdmin() || user?.role === 'admin')) {
+      message.error(t('room.editPermissionDenied'));
+      return;
+    }
+
     console.log('🔄 切换语言:', currentLanguage, '->', language);
     setCurrentLanguage(language);
     socketService.sendLanguageChange(roomId!, language);
@@ -2239,18 +2291,19 @@ const CollaborativeEditor: React.FC = () => {
 
   // 📝 处理字体大小变化
   const handleFontSizeChange = useCallback((value: number) => {
-    setEditorFontSize(value);
+    const clamped = Math.min(30, Math.max(10, Math.round(value)));
+    setEditorFontSize(clamped);
     
     // 保存到 localStorage
-    localStorage.setItem('editor_fontSize', value.toString());
+    localStorage.setItem('editor_fontSize', clamped.toString());
     
     // 更新 Monaco 编辑器字体大小
     if (editorRef.current) {
-      editorRef.current.updateOptions({ fontSize: value });
+      editorRef.current.updateOptions({ fontSize: clamped });
     }
     
     // 日志记录
-    console.log(`📝 编辑器字体大小已更改: ${value}px`);
+    console.log(`📝 编辑器字体大小已更改: ${clamped}px`);
   }, []);
 
   // 💡 处理透明度变化
@@ -2416,6 +2469,25 @@ const CollaborativeEditor: React.FC = () => {
 
   const handleLeaveRoom = () => {
     console.log('🚪 退出房间按钮被点击');
+
+    // 外部链接模式：不要用 Modal.confirm（会被 BrowserView 压在底层，看起来“不生效”）
+    if (useExternalEditor) {
+      try {
+        window.electron?.ipcRenderer?.invoke('external-editor:clear').catch(() => {});
+      } catch {}
+
+      // 清理资源
+      if (bindingRef.current) {
+        bindingRef.current.destroy();
+      }
+      if (providerRef.current) {
+        providerRef.current.destroy();
+      }
+      socketService.leaveRoom();
+      socketService.disconnect();
+      navigate('/dashboard');
+      return;
+    }
 
     Modal.confirm({
       title: t('editor.confirmLeaveRoom'),
@@ -2666,8 +2738,6 @@ const CollaborativeEditor: React.FC = () => {
     }
   };
 
-
-
   // 检查用户是否为房间管理员
   const isRoomAdmin = () => {
     const currentMember = room?.members?.find(m => m.user.id === user?.id);
@@ -2683,6 +2753,133 @@ const CollaborativeEditor: React.FC = () => {
 
   if (loading) {
     return <div>{t('common.loading')}</div>;
+  }
+
+  if (useExternalEditor && room?.coderpadUrl) {
+    const expiresAtMs = room.coderpadExpiresAt ? new Date(room.coderpadExpiresAt).getTime() : 0;
+    const isLinkExpired = Number.isFinite(expiresAtMs) && expiresAtMs > 0 && expiresAtMs <= Date.now();
+    const canEditLink = isRoomAdmin() || user?.role === 'admin';
+
+    if (isLinkExpired) {
+      // 过期时强制阻断使用：清掉 BrowserView，提示先更新链接
+      if (isElectron && window.electron?.ipcRenderer) {
+        window.electron.ipcRenderer.invoke('external-editor:clear').catch(() => {});
+      }
+
+      return (
+        <Layout style={{ height: '100vh' }}>
+          <Content style={{ padding: 24 }}>
+            <div style={{ maxWidth: 560, margin: '0 auto' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>
+                {t('room.codeLinkExpired') || '链接已过期'}
+              </div>
+              <div style={{ color: '#666', marginBottom: 16, lineHeight: 1.6 }}>
+                {canEditLink
+                  ? (t('room.codeLinkExpiredAdminHint') || '该房间的代码链接已超过有效期，请先在 Dashboard 中编辑房间并更新链接/有效期后再继续使用。')
+                  : (t('room.codeLinkExpiredUserHint') || '该房间的代码链接已超过有效期，请联系创建者更新链接后再进入。')}
+              </div>
+
+              <Space>
+                <Button type="primary" onClick={() => navigate('/dashboard')}>
+                  {t('dashboard.title') || '返回 Dashboard'}
+                </Button>
+                <Button onClick={handleLeaveRoom}>{t('room.leaveRoom')}</Button>
+              </Space>
+            </div>
+          </Content>
+        </Layout>
+      );
+    }
+
+    return (
+      <Layout style={{ height: '100vh' }}>
+        <Content style={{ padding: 0, position: 'relative', height: '100%' }}>
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            right: 0,
+            zIndex: 10001,
+            background: 'rgba(255,255,255,0.95)',
+            borderBottom: '1px solid rgba(0,0,0,0.08)',
+            borderLeft: '1px solid rgba(0,0,0,0.08)',
+            borderRadius: 0,
+            backdropFilter: 'blur(8px)',
+            padding: '0 6px',
+            height: 32,
+            boxShadow: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            whiteSpace: 'nowrap',
+          }}>
+            <Button size="small" icon={<ArrowLeftOutlined />} onClick={handleLeaveRoom}>
+              {t('room.leaveRoom')}
+            </Button>
+
+            {room.roomCode && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderLeft: '1px solid #e0e0e0', paddingLeft: 6 }}>
+                <span style={{ fontSize: 11, color: '#999' }}>{t('room.roomCode')}</span>
+                <Tag
+                  color="purple"
+                  style={{
+                    margin: 0,
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    cursor: 'pointer',
+                    lineHeight: '16px',
+                    padding: '0 4px',
+                  }}
+                  onClick={() => copyRoomCode(room.roomCode)}
+                >
+                  {room.roomCode}
+                </Tag>
+              </div>
+            )}
+
+            <Button
+              size="small"
+              icon={<GlobalOutlined />}
+              type="primary"
+              onClick={() => window.open(room.coderpadUrl!, '_blank')}
+            >
+              {t('room.enterWebVersion')}
+            </Button>
+
+            <Button
+              size="small"
+              icon={<ToolOutlined />}
+              onClick={() => setShowToolbox(!showToolbox)}
+            />
+
+            {isElectron && showToolbox && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                borderLeft: '1px solid #e0e0e0',
+                paddingLeft: 6,
+                marginLeft: 2
+              }}>
+                <span style={{ fontSize: 11, color: '#666', fontWeight: 600, minWidth: 34, textAlign: 'right' }}>
+                  {opacity}%
+                </span>
+                <Slider
+                  min={10}
+                  max={100}
+                  value={opacity}
+                  onChange={handleOpacityChange}
+                  tooltip={{ open: false }}
+                  style={{ width: 120 }}
+                />
+              </div>
+            )}
+          </div>
+
+          <div style={{ width: '100%', height: '100%' }} />
+
+        </Content>
+      </Layout>
+    );
   }
 
   return (
@@ -2783,14 +2980,20 @@ const CollaborativeEditor: React.FC = () => {
                 }}>
                   {t('room.roomCode')}
                 </div>
-                <div style={{
-                  fontSize: '10px',
-                  color: '#666',
-                  fontFamily: 'monospace',
-                  fontWeight: 500
-                }}>
+                <Tag
+                  color="purple"
+                  style={{
+                    margin: 0,
+                    fontSize: 10,
+                    fontFamily: 'monospace',
+                    cursor: 'pointer',
+                    lineHeight: '16px',
+                    padding: '0 6px',
+                  }}
+                  onClick={() => copyRoomCode(room.roomCode)}
+                >
                   {room.roomCode}
-                </div>
+                </Tag>
               </div>
             )}
           </div>
@@ -2832,6 +3035,7 @@ const CollaborativeEditor: React.FC = () => {
             <Select
               value={currentLanguage}
               onChange={handleLanguageChange}
+              disabled={!(isRoomAdmin() || user?.role === 'admin')}
               style={{ width: 120 }}
             >
               <Option value="javascript">JavaScript</Option>
@@ -2931,14 +3135,7 @@ const CollaborativeEditor: React.FC = () => {
             </Tooltip>
           )}
 
-          {/* 只有房间管理员可以分享 */}
-          {!isElectron && isRoomAdmin() && (
-            <Tooltip title={t('editor.shareRoomHint') || '复制房间号，分享给他人加入'}>
-              <Button icon={<ShareAltOutlined />} onClick={() => copyRoomCode(room?.roomCode)}>
-                {t('common.share')}
-              </Button>
-            </Tooltip>
-          )}
+          {/* 已按需求移除“复制房间号”入口 */}
         </Space>
       </Header>
 

@@ -1,13 +1,50 @@
-import { app, shell, BrowserWindow, ipcMain, globalShortcut, screen } from 'electron'
+import { app, shell, BrowserWindow, BrowserView, ipcMain, globalShortcut, screen } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
 // 全局变量
 let mainWindow: BrowserWindow | null = null
+let externalEditorView: BrowserView | null = null
+let externalEditorUrl: string | null = null
+let externalEditorInsets = { top: 0, right: 0, bottom: 0, left: 0 }
 let isMouseThrough = false
 const MOVE_STEP = 50
 const SIZE_STEP = 50
+function updateExternalEditorBounds(insets?: { top?: number; right?: number; bottom?: number; left?: number }) {
+  if (!mainWindow || !externalEditorView) return
+  const { top, right, bottom, left } = {
+    ...externalEditorInsets,
+    ...(insets || {})
+  }
+  const contentBounds = mainWindow.getContentBounds()
+  const safeTop = Math.max(0, Math.min(top ?? 0, contentBounds.height))
+  const safeBottom = Math.max(0, Math.min(bottom ?? 0, contentBounds.height - safeTop))
+  const safeLeft = Math.max(0, Math.min(left ?? 0, contentBounds.width))
+  const safeRight = Math.max(0, Math.min(right ?? 0, contentBounds.width - safeLeft))
+  externalEditorView.setBounds({
+    x: safeLeft,
+    y: safeTop,
+    width: Math.max(0, contentBounds.width - safeLeft - safeRight),
+    height: Math.max(0, contentBounds.height - safeTop - safeBottom)
+  })
+  externalEditorView.setAutoResize({ width: true, height: true })
+}
+
+function resetWebContentsZoom(wc: Electron.WebContents | null | undefined) {
+  if (!wc) return
+  try {
+    wc.setZoomFactor(1)
+    wc.setZoomLevel(0)
+    const anyWc: any = wc as any
+    if (typeof anyWc.setVisualZoomLevelLimits === 'function') {
+      try {
+        const ret = anyWc.setVisualZoomLevelLimits(1, 1)
+        if (ret && typeof ret.catch === 'function') ret.catch(() => {})
+      } catch {}
+    }
+  } catch {}
+}
 
 function createWindow(): void {
   // Create the browser window.
@@ -46,6 +83,27 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // 窗口大小变化时同步 BrowserView 尺寸
+  mainWindow.on('resize', () => updateExternalEditorBounds())
+  mainWindow.on('maximize', () => updateExternalEditorBounds())
+  mainWindow.on('unmaximize', () => updateExternalEditorBounds())
+
+  // 🔍 强制重置 UI 缩放（解决“整个 UI 被放大且重启仍不生效”——Chromium 会持久化 zoomLevel）
+  const resetUiZoom = () => {
+    if (!mainWindow) return
+    try {
+      resetWebContentsZoom(mainWindow.webContents)
+      console.log('🔎 UI zoom reset to 100% and locked')
+    } catch (e) {
+      console.warn('🔎 Failed to reset/lock UI zoom:', e)
+    }
+  }
+
+  mainWindow.webContents.on('did-finish-load', resetUiZoom)
+  mainWindow.webContents.on('did-navigate', resetUiZoom)
+  mainWindow.webContents.on('did-navigate-in-page', resetUiZoom)
+  mainWindow.webContents.on('zoom-changed', () => resetUiZoom())
+
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -64,6 +122,12 @@ function createWindow(): void {
 // 注册全局快捷键
 function registerGlobalShortcuts(): void {
   try {
+    const executeInActiveWebContents = (js: string) => {
+      const wc = externalEditorView?.webContents ?? mainWindow?.webContents
+      if (!wc) return
+      wc.executeJavaScript(js).catch(() => {})
+    }
+
     // Cmd + B: 显示/隐藏窗口
     globalShortcut.register('CommandOrControl+B', () => {
       if (mainWindow) {
@@ -221,47 +285,82 @@ function registerGlobalShortcuts(): void {
     const SCROLL_AMOUNT = 150  // 从 50 增加到 150
     const FAST_SCROLL_AMOUNT = 500  // 从 200 增加到 500
 
+    const wheelScrollActive = (deltaX: number, deltaY: number) => {
+      if (externalEditorView) {
+        try {
+          externalEditorView.webContents.focus()
+          externalEditorView.webContents.sendInputEvent({
+            type: 'mouseWheel',
+            deltaX,
+            deltaY,
+            canScroll: true
+          } as any)
+          return
+        } catch {}
+      }
+      // fallback: 走渲染层 JS 滚动
+      executeInActiveWebContents(`
+        window.scrollBy(${deltaX}, ${deltaY})
+      `)
+    }
+
     // Cmd/Ctrl + Shift + ↑: Monaco编辑器向上滚动
     globalShortcut.register('CommandOrControl+Shift+Up', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
-          window.monacoEditorInstance ? 
-            window.monacoEditorInstance.setScrollTop(Math.max(0, window.monacoEditorInstance.getScrollTop() - ${SCROLL_AMOUNT})) :
-            window.scrollBy(0, -${SCROLL_AMOUNT})
-        `)
+        if (externalEditorView) {
+          wheelScrollActive(0, -SCROLL_AMOUNT)
+        } else {
+          executeInActiveWebContents(`
+            window.monacoEditorInstance ? 
+              window.monacoEditorInstance.setScrollTop(Math.max(0, window.monacoEditorInstance.getScrollTop() - ${SCROLL_AMOUNT})) :
+              window.scrollBy(0, -${SCROLL_AMOUNT})
+          `)
+        }
       }
     })
 
     // Cmd/Ctrl + Shift + ↓: Monaco编辑器向下滚动
     globalShortcut.register('CommandOrControl+Shift+Down', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
-          window.monacoEditorInstance ? 
-            window.monacoEditorInstance.setScrollTop(window.monacoEditorInstance.getScrollTop() + ${SCROLL_AMOUNT}) :
-            window.scrollBy(0, ${SCROLL_AMOUNT})
-        `)
+        if (externalEditorView) {
+          wheelScrollActive(0, SCROLL_AMOUNT)
+        } else {
+          executeInActiveWebContents(`
+            window.monacoEditorInstance ? 
+              window.monacoEditorInstance.setScrollTop(window.monacoEditorInstance.getScrollTop() + ${SCROLL_AMOUNT}) :
+              window.scrollBy(0, ${SCROLL_AMOUNT})
+          `)
+        }
       }
     })
 
     // Cmd/Ctrl + Shift + ←: Monaco编辑器向左滚动
     globalShortcut.register('CommandOrControl+Shift+Left', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
-          window.monacoEditorInstance ? 
-            window.monacoEditorInstance.setScrollLeft(Math.max(0, window.monacoEditorInstance.getScrollLeft() - ${SCROLL_AMOUNT})) :
-            window.scrollBy(-${SCROLL_AMOUNT}, 0)
-        `)
+        if (externalEditorView) {
+          wheelScrollActive(-SCROLL_AMOUNT, 0)
+        } else {
+          executeInActiveWebContents(`
+            window.monacoEditorInstance ? 
+              window.monacoEditorInstance.setScrollLeft(Math.max(0, window.monacoEditorInstance.getScrollLeft() - ${SCROLL_AMOUNT})) :
+              window.scrollBy(-${SCROLL_AMOUNT}, 0)
+          `)
+        }
       }
     })
 
     // Cmd/Ctrl + Shift + →: Monaco编辑器向右滚动
     globalShortcut.register('CommandOrControl+Shift+Right', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
-          window.monacoEditorInstance ? 
-            window.monacoEditorInstance.setScrollLeft(window.monacoEditorInstance.getScrollLeft() + ${SCROLL_AMOUNT}) :
-            window.scrollBy(${SCROLL_AMOUNT}, 0)
-        `)
+        if (externalEditorView) {
+          wheelScrollActive(SCROLL_AMOUNT, 0)
+        } else {
+          executeInActiveWebContents(`
+            window.monacoEditorInstance ? 
+              window.monacoEditorInstance.setScrollLeft(window.monacoEditorInstance.getScrollLeft() + ${SCROLL_AMOUNT}) :
+              window.scrollBy(${SCROLL_AMOUNT}, 0)
+          `)
+        }
       }
     })
 
@@ -269,44 +368,60 @@ function registerGlobalShortcuts(): void {
     // Cmd/Ctrl + Alt + Shift + ↑: 快速向上滚动
     globalShortcut.register('CommandOrControl+Alt+Shift+Up', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
-          window.monacoEditorInstance ? 
-            window.monacoEditorInstance.setScrollTop(Math.max(0, window.monacoEditorInstance.getScrollTop() - ${FAST_SCROLL_AMOUNT})) :
-            window.scrollBy(0, -${FAST_SCROLL_AMOUNT})
-        `)
+        if (externalEditorView) {
+          wheelScrollActive(0, -FAST_SCROLL_AMOUNT)
+        } else {
+          executeInActiveWebContents(`
+            window.monacoEditorInstance ? 
+              window.monacoEditorInstance.setScrollTop(Math.max(0, window.monacoEditorInstance.getScrollTop() - ${FAST_SCROLL_AMOUNT})) :
+              window.scrollBy(0, -${FAST_SCROLL_AMOUNT})
+          `)
+        }
       }
     })
 
     // Cmd/Ctrl + Alt + Shift + ↓: 快速向下滚动
     globalShortcut.register('CommandOrControl+Alt+Shift+Down', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
-          window.monacoEditorInstance ? 
-            window.monacoEditorInstance.setScrollTop(window.monacoEditorInstance.getScrollTop() + ${FAST_SCROLL_AMOUNT}) :
-            window.scrollBy(0, ${FAST_SCROLL_AMOUNT})
-        `)
+        if (externalEditorView) {
+          wheelScrollActive(0, FAST_SCROLL_AMOUNT)
+        } else {
+          executeInActiveWebContents(`
+            window.monacoEditorInstance ? 
+              window.monacoEditorInstance.setScrollTop(window.monacoEditorInstance.getScrollTop() + ${FAST_SCROLL_AMOUNT}) :
+              window.scrollBy(0, ${FAST_SCROLL_AMOUNT})
+          `)
+        }
       }
     })
 
     // Cmd/Ctrl + Alt + Shift + ←: 快速向左滚动
     globalShortcut.register('CommandOrControl+Alt+Shift+Left', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
-          window.monacoEditorInstance ? 
-            window.monacoEditorInstance.setScrollLeft(Math.max(0, window.monacoEditorInstance.getScrollLeft() - ${FAST_SCROLL_AMOUNT})) :
-            window.scrollBy(-${FAST_SCROLL_AMOUNT}, 0)
-        `)
+        if (externalEditorView) {
+          wheelScrollActive(-FAST_SCROLL_AMOUNT, 0)
+        } else {
+          executeInActiveWebContents(`
+            window.monacoEditorInstance ? 
+              window.monacoEditorInstance.setScrollLeft(Math.max(0, window.monacoEditorInstance.getScrollLeft() - ${FAST_SCROLL_AMOUNT})) :
+              window.scrollBy(-${FAST_SCROLL_AMOUNT}, 0)
+          `)
+        }
       }
     })
 
     // Cmd/Ctrl + Alt + Shift + →: 快速向右滚动
     globalShortcut.register('CommandOrControl+Alt+Shift+Right', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
-          window.monacoEditorInstance ? 
-            window.monacoEditorInstance.setScrollLeft(window.monacoEditorInstance.getScrollLeft() + ${FAST_SCROLL_AMOUNT}) :
-            window.scrollBy(${FAST_SCROLL_AMOUNT}, 0)
-        `)
+        if (externalEditorView) {
+          wheelScrollActive(FAST_SCROLL_AMOUNT, 0)
+        } else {
+          executeInActiveWebContents(`
+            window.monacoEditorInstance ? 
+              window.monacoEditorInstance.setScrollLeft(window.monacoEditorInstance.getScrollLeft() + ${FAST_SCROLL_AMOUNT}) :
+              window.scrollBy(${FAST_SCROLL_AMOUNT}, 0)
+          `)
+        }
       }
     })
 
@@ -314,7 +429,7 @@ function registerGlobalShortcuts(): void {
     // Cmd/Ctrl + Shift + Home: 滚动到顶部
     globalShortcut.register('CommandOrControl+Shift+Home', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
+        executeInActiveWebContents(`
           window.monacoEditorInstance ? 
             window.monacoEditorInstance.setScrollTop(0) :
             window.scrollTo(0, 0)
@@ -325,7 +440,7 @@ function registerGlobalShortcuts(): void {
     // Cmd/Ctrl + Shift + End: 滚动到底部
     globalShortcut.register('CommandOrControl+Shift+End', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
+        executeInActiveWebContents(`
           window.monacoEditorInstance ? 
             window.monacoEditorInstance.setScrollTop(window.monacoEditorInstance.getScrollHeight()) :
             window.scrollTo(0, document.body.scrollHeight)
@@ -336,7 +451,7 @@ function registerGlobalShortcuts(): void {
     // Cmd/Ctrl + Shift + PageUp: 向上滚动一页
     globalShortcut.register('CommandOrControl+Shift+PageUp', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
+        executeInActiveWebContents(`
           window.monacoEditorInstance ? 
             window.monacoEditorInstance.setScrollTop(Math.max(0, window.monacoEditorInstance.getScrollTop() - window.monacoEditorInstance.getLayoutInfo().height * 0.8)) :
             window.scrollBy(0, -window.innerHeight * 0.8)
@@ -347,7 +462,7 @@ function registerGlobalShortcuts(): void {
     // Cmd/Ctrl + Shift + PageDown: 向下滚动一页
     globalShortcut.register('CommandOrControl+Shift+PageDown', () => {
       if (mainWindow) {
-        mainWindow.webContents.executeJavaScript(`
+        executeInActiveWebContents(`
           window.monacoEditorInstance ? 
             window.monacoEditorInstance.setScrollTop(window.monacoEditorInstance.getScrollTop() + window.monacoEditorInstance.getLayoutInfo().height * 0.8) :
             window.scrollBy(0, window.innerHeight * 0.8)
@@ -418,6 +533,66 @@ app.whenReady().then(() => {
 
   // IPC handlers
   ipcMain.on('ping', () => console.log('pong'))
+  
+  // 外部编辑器（共享代码链接）嵌入：主进程创建 BrowserView 加载 URL，避免 iframe 被 X-Frame-Options/CSP 阻止
+  ipcMain.handle('external-editor:set', async (_event, payload: { url: string; topOffset?: number; top?: number; right?: number; bottom?: number; left?: number }) => {
+    if (!mainWindow) return false
+    const url = payload?.url
+    if (!url || typeof url !== 'string') return false
+
+    // 只要 URL 不变，就不要重建 BrowserView（避免“工具箱/参数变化导致页面刷新”）
+    if (!externalEditorView) {
+      externalEditorView = new BrowserView({
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          sandbox: true
+        } as any
+      })
+      mainWindow.setBrowserView(externalEditorView)
+    }
+
+    // 兼容旧字段 topOffset，同时支持四边 insets
+    externalEditorInsets = {
+      top: payload?.top ?? (payload?.topOffset ?? 0),
+      right: payload?.right ?? 0,
+      bottom: payload?.bottom ?? 0,
+      left: payload?.left ?? 0
+    }
+    updateExternalEditorBounds(externalEditorInsets)
+
+    resetWebContentsZoom(externalEditorView.webContents)
+
+    // 外链统一走系统浏览器
+    externalEditorView.webContents.setWindowOpenHandler((details) => {
+      shell.openExternal(details.url)
+      return { action: 'deny' }
+    })
+
+    externalEditorView.webContents.on('did-finish-load', () => resetWebContentsZoom(externalEditorView?.webContents))
+    externalEditorView.webContents.on('did-navigate', () => resetWebContentsZoom(externalEditorView?.webContents))
+    externalEditorView.webContents.on('zoom-changed', () => resetWebContentsZoom(externalEditorView?.webContents))
+
+    if (externalEditorUrl !== url) {
+      externalEditorUrl = url
+      await externalEditorView.webContents.loadURL(url)
+    }
+    return true
+  })
+
+  ipcMain.handle('external-editor:clear', async () => {
+    if (!mainWindow) return true
+    try {
+      if (externalEditorView) {
+        mainWindow.setBrowserView(null)
+        try { (externalEditorView.webContents as any).destroy?.() } catch {}
+        externalEditorView = null
+      }
+    } catch {}
+    externalEditorInsets = { top: 0, right: 0, bottom: 0, left: 0 }
+    externalEditorUrl = null
+    return true
+  })
   
   // 获取当前穿透模式状态
   ipcMain.handle('get-mouse-through-mode', () => {

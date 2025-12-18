@@ -11,6 +11,7 @@ import {
   Modal,
   Form,
   Input,
+  DatePicker,
   Select,
   message,
   Dropdown,
@@ -24,10 +25,10 @@ import {
   UserOutlined,
   LogoutOutlined,
   CodeOutlined,
-  ShareAltOutlined,
   LoginOutlined,
   DeleteOutlined,
   ReloadOutlined,
+  EditOutlined,
   EyeOutlined,
   EyeInvisibleOutlined,
   CrownOutlined,
@@ -39,6 +40,7 @@ import { useNavigate } from 'react-router-dom';
 import { roomsAPI } from '../services/api';
 import socketService from '../services/socket';
 import { useTranslation } from 'react-i18next';
+import dayjs from 'dayjs';
 
 const { Header, Content } = Layout;
 const { Title, Text } = Typography;
@@ -52,6 +54,8 @@ interface Room {
   password?: string;
   status: 'normal' | 'ended';
   language: string;
+  coderpadUrl?: string;
+  coderpadExpiresAt?: string;
   createdAt: string;
   onlineCount?: number; // 实时在线人数
   members: Array<{
@@ -65,6 +69,12 @@ interface Room {
   }>;
 }
 
+const isExpired = (expiresAt?: string) => {
+  if (!expiresAt) return false;
+  const t = new Date(expiresAt).getTime();
+  return Number.isFinite(t) && t > 0 && t <= Date.now();
+};
+
 const Dashboard: React.FC = () => {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [myCreatedRooms, setMyCreatedRooms] = useState<Room[]>([]);
@@ -72,13 +82,27 @@ const Dashboard: React.FC = () => {
   const [myRoomsLoading, setMyRoomsLoading] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [joinModalVisible, setJoinModalVisible] = useState(false);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [activeTab, setActiveTab] = useState('active-rooms');
   const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set());
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const [joinForm] = Form.useForm();
+  const [editForm] = Form.useForm();
   const { t, i18n } = useTranslation();
+
+  const hasValidUrl = (url?: string) => {
+    if (!url) return false;
+    try {
+      // eslint-disable-next-line no-new
+      new URL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   useEffect(() => {
     loadRooms();
@@ -129,14 +153,101 @@ const Dashboard: React.FC = () => {
 
   const handleCreateRoom = async (values: any) => {
     try {
-      await roomsAPI.createRoom(values);
+      const url = (values?.coderpadUrl || '').trim();
+      const payload: any = { ...values, coderpadUrl: url || undefined };
+      if (!payload.coderpadUrl) {
+        delete payload.coderpadUrl;
+        delete payload.coderpadExpiresAt;
+      } else {
+        const picked = payload.coderpadExpiresAt;
+        payload.coderpadExpiresAt = picked ? dayjs(picked).endOf('day').toISOString() : dayjs().add(2, 'day').endOf('day').toISOString();
+      }
+
+      await roomsAPI.createRoom(payload);
       message.success(t('dashboard.createRoomSuccess'));
       setCreateModalVisible(false);
       form.resetFields();
       refreshCurrentTab();
-    } catch (error) {
-      message.error(t('dashboard.createRoomFailed'));
+    } catch (error: any) {
+      const serverMessage = error?.response?.data?.message;
+      const displayMessage = Array.isArray(serverMessage) ? serverMessage.join('\n') : serverMessage;
+      message.error(displayMessage || error?.message || t('dashboard.createRoomFailed'));
+      console.error('Create room error:', error);
     }
+  };
+
+  const handleOpenEditRoom = (room: Room) => {
+    setEditingRoom(room);
+    editForm.setFieldsValue({
+      name: room.name,
+      description: room.description,
+      language: room.language,
+      coderpadUrl: room.coderpadUrl || '',
+      coderpadExpiresAt: room.coderpadUrl ? (room.coderpadExpiresAt ? dayjs(room.coderpadExpiresAt) : dayjs().add(2, 'day')) : undefined,
+    });
+    setEditModalVisible(true);
+  };
+
+  const handleUpdateRoom = async (values: any) => {
+    if (!editingRoom) return;
+    try {
+      const url = (values?.coderpadUrl || '').trim();
+      const payload: any = { ...values, coderpadUrl: url || undefined };
+      if (!payload.coderpadUrl) {
+        // 关键：清空链接时必须显式传 null（否则 PATCH 会被视为“未更新该字段”）
+        payload.coderpadUrl = null;
+        payload.coderpadExpiresAt = null;
+      } else {
+        const picked = payload.coderpadExpiresAt;
+        payload.coderpadExpiresAt = picked ? dayjs(picked).endOf('day').toISOString() : dayjs().add(2, 'day').endOf('day').toISOString();
+      }
+
+      await roomsAPI.updateRoom(editingRoom.id, payload);
+      message.success(t('common.success'));
+      setEditModalVisible(false);
+      setEditingRoom(null);
+      editForm.resetFields();
+      refreshCurrentTab();
+      if (activeTab === 'my-rooms') {
+        loadMyCreatedRooms();
+      }
+    } catch (error: any) {
+      const serverMessage = error?.response?.data?.message;
+      const displayMessage = Array.isArray(serverMessage) ? serverMessage.join('\n') : serverMessage;
+      message.error(displayMessage || error?.message || t('common.error'));
+      console.error('Update room error:', error);
+    }
+  };
+
+  const handleMarkLinkExpiredInDashboard = async () => {
+    if (!editingRoom?.id) return;
+    Modal.confirm({
+      title: t('room.markLinkExpiredConfirmTitle') || '确认标记链接过期？',
+      content:
+        t('room.markLinkExpiredConfirmContent') ||
+        '这会把链接有效期设置为“过去时间”，进入房间会被拦截（用于测试）。你确定要继续吗？',
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          await roomsAPI.updateRoom(editingRoom.id, { coderpadExpiresAt: new Date(Date.now() - 1000).toISOString() });
+          message.success(t('common.success'));
+          setEditModalVisible(false);
+          setEditingRoom(null);
+          editForm.resetFields();
+          refreshCurrentTab();
+          if (activeTab === 'my-rooms') {
+            loadMyCreatedRooms();
+          }
+        } catch (error: any) {
+          const serverMessage = error?.response?.data?.message;
+          const displayMessage = Array.isArray(serverMessage) ? serverMessage.join('\n') : serverMessage;
+          message.error(displayMessage || error?.message || t('common.error'));
+          console.error('Mark link expired (dashboard) error:', error);
+        }
+      },
+    });
   };
 
   const handleJoinRoom = async (roomId: string) => {
@@ -147,16 +258,21 @@ const Dashboard: React.FC = () => {
       // Then navigate to the room
       navigate(`/room/${roomId}`);
     } catch (error: any) {
+      const serverMessage = error?.response?.data?.message;
+      const displayMessage = Array.isArray(serverMessage) ? serverMessage.join('\n') : serverMessage;
+
       if (error.response?.status === 403 && error.response?.data?.message?.includes('already a member')) {
         // User is already a member, just navigate
         navigate(`/room/${roomId}`);
+      } else if (error.response?.status === 403 && `${serverMessage}`.toLowerCase().includes('expired')) {
+        message.error(t('room.codeLinkExpired') || displayMessage || t('dashboard.joinRoomFailed'));
       } else if (error.response?.status === 404) {
         // Room has been deleted
         message.error(t('room.roomNotFound'));
         // Refresh the current room list to remove deleted rooms
         refreshCurrentTab();
       } else {
-        message.error(t('dashboard.joinRoomFailed'));
+        message.error(displayMessage || t('dashboard.joinRoomFailed'));
         console.error('Join room error:', error);
       }
     }
@@ -173,18 +289,13 @@ const Dashboard: React.FC = () => {
       navigate(`/room/${roomResponse.data.id}`);
       refreshCurrentTab(); // Refresh room list
     } catch (error: any) {
-      if (error.response?.data?.message) {
-        message.error(error.response.data.message);
-      } else {
-        message.error(t('dashboard.joinRoomFailed'));
-      }
+      const serverMessage = error?.response?.data?.message;
+      const displayMessage = Array.isArray(serverMessage) ? serverMessage.join('\n') : serverMessage;
+      message.error(displayMessage || t('dashboard.joinRoomFailed'));
     }
   };
 
-  const copyRoomCode = (roomCode: string) => {
-    navigator.clipboard.writeText(roomCode);
-    message.success(t('room.roomCodeCopied'));
-  };
+  // 已按需求移除「复制房间号」入口
 
   const changeLanguage = (lang: string) => {
     i18n.changeLanguage(lang);
@@ -483,16 +594,18 @@ const Dashboard: React.FC = () => {
                         {t('common.enter')}
                       </Button>
                     </Tooltip>,
-                    <Tooltip title={room.status === 'ended' ? t('room.cannotShareEndedRoom') : t('room.shareRoom')}>
-                      <Button
-                        icon={<ShareAltOutlined />}
-                        onClick={() => copyRoomCode(room.roomCode)}
-                        size="small"
-                        disabled={room.status === 'ended'}
-                      >
-                        {t('common.share')}
-                      </Button>
-                    </Tooltip>,
+                    null,
+                    (isCreator || user?.role === 'admin') ? (
+                      <Tooltip title={t('common.edit')}>
+                        <Button
+                          icon={<EditOutlined />}
+                          onClick={() => handleOpenEditRoom(room)}
+                          size="small"
+                        >
+                          {t('common.edit')}
+                        </Button>
+                      </Tooltip>
+                    ) : null,
                     isCreator ? (
                       <Tooltip title={t('room.deleteRoom')}>
                         <Button
@@ -540,22 +653,18 @@ const Dashboard: React.FC = () => {
                           }}>
                             {room.name}
                           </Text>
-                          <Tooltip title="点击复制房间号">
-                            <Tag
-                              color="purple"
-                              style={{
-                                margin: 0,
-                                fontSize: '9px',
-                                cursor: 'pointer',
-                                fontFamily: 'monospace',
-                                padding: '1px 4px',
-                                lineHeight: '1.2'
-                              }}
-                              onClick={() => copyRoomCode(room.roomCode)}
-                            >
-                              {room.roomCode}
-                            </Tag>
-                          </Tooltip>
+                          <Tag
+                            color="purple"
+                            style={{
+                              margin: 0,
+                              fontSize: '9px',
+                              fontFamily: 'monospace',
+                              padding: '1px 4px',
+                              lineHeight: '1.2'
+                            }}
+                          >
+                            {room.roomCode}
+                          </Tag>
                         </div>
                         {/* 创建者标识 */}
                         {isCreator && (
@@ -697,16 +806,7 @@ const Dashboard: React.FC = () => {
                                 {t('common.enter')}
                               </Button>
                             </Tooltip>,
-                            <Tooltip title={room.status === 'ended' ? t('room.cannotShareEndedRoom') : t('room.shareRoom')}>
-                              <Button
-                                icon={<ShareAltOutlined />}
-                                onClick={() => copyRoomCode(room.roomCode)}
-                                size="small"
-                                disabled={room.status === 'ended'}
-                              >
-                                {t('common.share')}
-                              </Button>
-                            </Tooltip>,
+                          null,
                             <Tooltip title={t('room.deleteRoom')}>
                               <Button
                                 danger
@@ -763,22 +863,18 @@ const Dashboard: React.FC = () => {
                                       </Button>
                                     </Tooltip>
                                   )}
-                                  <Tooltip title="点击复制房间号">
-                                    <Tag
-                                      color="purple"
-                                      style={{
-                                        margin: 0,
-                                        fontSize: '9px',
-                                        cursor: 'pointer',
-                                        fontFamily: 'monospace',
-                                        padding: '1px 4px',
-                                        lineHeight: '1.2'
-                                      }}
-                                      onClick={() => copyRoomCode(room.roomCode)}
-                                    >
-                                      {room.roomCode}
-                                    </Tag>
-                                  </Tooltip>
+                                  <Tag
+                                    color="purple"
+                                    style={{
+                                      margin: 0,
+                                      fontSize: '9px',
+                                      fontFamily: 'monospace',
+                                      padding: '1px 4px',
+                                      lineHeight: '1.2'
+                                    }}
+                                  >
+                                    {room.roomCode}
+                                  </Tag>
                                 </div>
                                 {/* 创建者标识 */}
                                 <Tag color="gold" icon={<CrownOutlined />} style={{
@@ -857,6 +953,33 @@ const Dashboard: React.FC = () => {
                               }}>
                                 {room.language}
                               </Tag>
+                              {room.coderpadUrl && (
+                                <Tooltip title={t('room.coderpadRoomHint') || ''}>
+                                  <Tag
+                                    icon={<GlobalOutlined />}
+                                    color="geekblue"
+                                    style={{
+                                      margin: 0,
+                                      fontSize: '9px',
+                                      padding: '1px 4px',
+                                      lineHeight: '1.2'
+                                    }}
+                                  >
+                                    {t('room.sharedLinkTag') || '外部链接'}
+                                  </Tag>
+                                </Tooltip>
+                              )}
+
+                              {room.coderpadUrl && isExpired(room.coderpadExpiresAt) && (
+                                <Tag color="red" style={{
+                                  margin: 0,
+                                  fontSize: '9px',
+                                  padding: '1px 4px',
+                                  lineHeight: '1.2'
+                                }}>
+                                  {t('room.codeLinkExpired') || '链接已过期'}
+                                </Tag>
+                              )}
                             </div>
 
                             {/* 底部信息 */}
@@ -904,6 +1027,36 @@ const Dashboard: React.FC = () => {
               label={t('room.roomDescription')}
             >
               <Input.TextArea placeholder={t('room.roomDescription')} rows={3} />
+            </Form.Item>
+
+            <Form.Item
+              name="coderpadUrl"
+              label={t('room.coderpadUrl')}
+              rules={[
+                { type: 'url', message: t('room.coderpadUrlInvalid') || '请输入有效的 URL（包含 https://）' },
+              ]}
+            >
+              <Input
+                placeholder={t('room.coderpadUrlPlaceholder')}
+                allowClear
+              />
+            </Form.Item>
+
+            {/* 只要设置了代码链接，就可设置有效期（默认 2 天） */}
+            <Form.Item noStyle shouldUpdate={(prev, cur) => prev.coderpadUrl !== cur.coderpadUrl}>
+              {({ getFieldValue }) => {
+                const url = (getFieldValue('coderpadUrl') || '').trim();
+                if (!hasValidUrl(url)) return null;
+                return (
+                    <Form.Item
+                      name="coderpadExpiresAt"
+                      label={t('room.coderpadExpiresAt') || '到期日期'}
+                      initialValue={dayjs().add(2, 'day')}
+                    >
+                      <DatePicker style={{ width: '100%' }} />
+                    </Form.Item>
+                );
+              }}
             </Form.Item>
 
             <Form.Item
@@ -983,6 +1136,112 @@ const Dashboard: React.FC = () => {
                 <Button onClick={() => {
                   setJoinModalVisible(false);
                   joinForm.resetFields();
+                }}>
+                  {t('common.cancel')}
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
+        </Modal>
+
+        <Modal
+          title={t('common.edit')}
+          open={editModalVisible}
+          onCancel={() => {
+            setEditModalVisible(false);
+            setEditingRoom(null);
+            editForm.resetFields();
+          }}
+          footer={null}
+        >
+          <Form
+            form={editForm}
+            layout="vertical"
+            onFinish={handleUpdateRoom}
+          >
+            <Form.Item
+              name="name"
+              label={t('room.roomName')}
+              rules={[{ required: true, message: t('room.roomName') }]}
+            >
+              <Input placeholder={t('room.roomName')} />
+            </Form.Item>
+
+            <Form.Item
+              name="description"
+              label={t('room.roomDescription')}
+            >
+              <Input.TextArea placeholder={t('room.roomDescription')} rows={3} />
+            </Form.Item>
+
+            <Form.Item
+              name="coderpadUrl"
+              label={t('room.coderpadUrl')}
+              rules={[
+                { type: 'url', message: t('room.coderpadUrlInvalid') || '请输入有效的 URL（包含 https://）' },
+              ]}
+            >
+              <Input
+                placeholder={t('room.coderpadUrlPlaceholder')}
+                allowClear
+              />
+            </Form.Item>
+
+            {/* 只要设置了代码链接，就可设置有效期（默认 2 天） */}
+            <Form.Item noStyle shouldUpdate={(prev, cur) => prev.coderpadUrl !== cur.coderpadUrl}>
+              {({ getFieldValue }) => {
+                const url = (getFieldValue('coderpadUrl') || '').trim();
+                if (!hasValidUrl(url)) return null;
+                return (
+                    <>
+                      <Form.Item
+                        name="coderpadExpiresAt"
+                        label={t('room.coderpadExpiresAt') || '到期日期'}
+                        initialValue={dayjs().add(2, 'day')}
+                      >
+                        <DatePicker style={{ width: '100%' }} />
+                      </Form.Item>
+                      <div style={{ marginTop: -8, marginBottom: 12, display: 'flex', justifyContent: 'flex-end' }}>
+                        <Button
+                          danger
+                          icon={<StopOutlined />}
+                          size="small"
+                          onClick={handleMarkLinkExpiredInDashboard}
+                        >
+                          {t('room.markLinkExpired') || '标记过期'}
+                        </Button>
+                      </div>
+                    </>
+                );
+              }}
+            </Form.Item>
+
+            <Form.Item
+              name="language"
+              label={t('editor.language')}
+              initialValue="javascript"
+            >
+              <Select>
+                <Option value="javascript">JavaScript</Option>
+                <Option value="typescript">TypeScript</Option>
+                <Option value="python">Python</Option>
+                <Option value="java">Java</Option>
+                <Option value="cpp">C++</Option>
+                <Option value="csharp">C#</Option>
+                <Option value="go">Go</Option>
+                <Option value="rust">Rust</Option>
+              </Select>
+            </Form.Item>
+
+            <Form.Item>
+              <Space>
+                <Button type="primary" htmlType="submit">
+                  {t('common.confirm')}
+                </Button>
+                <Button onClick={() => {
+                  setEditModalVisible(false);
+                  setEditingRoom(null);
+                  editForm.resetFields();
                 }}>
                   {t('common.cancel')}
                 </Button>
