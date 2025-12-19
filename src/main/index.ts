@@ -8,6 +8,7 @@ let mainWindow: BrowserWindow | null = null
 let externalEditorView: BrowserView | null = null
 let externalEditorUrl: string | null = null
 let externalEditorInsets = { top: 0, right: 0, bottom: 0, left: 0 }
+let externalEditorBoundsKeepAliveTimer: NodeJS.Timeout | null = null
 let isMouseThrough = false
 const MOVE_STEP = 50
 const SIZE_STEP = 50
@@ -17,18 +18,19 @@ function updateExternalEditorBounds(insets?: { top?: number; right?: number; bot
     ...externalEditorInsets,
     ...(insets || {})
   }
-  const contentBounds = mainWindow.getContentBounds()
-  const safeTop = Math.max(0, Math.min(top ?? 0, contentBounds.height))
-  const safeBottom = Math.max(0, Math.min(bottom ?? 0, contentBounds.height - safeTop))
-  const safeLeft = Math.max(0, Math.min(left ?? 0, contentBounds.width))
-  const safeRight = Math.max(0, Math.min(right ?? 0, contentBounds.width - safeLeft))
+  // 用 getContentSize() 避免部分平台/缩放场景下 getContentBounds() 造成的边界偏差（可能导致工具条被 BrowserView 覆盖）
+  const [contentWidth, contentHeight] = mainWindow.getContentSize()
+  const safeTop = Math.max(0, Math.min(top ?? 0, contentHeight))
+  const safeBottom = Math.max(0, Math.min(bottom ?? 0, contentHeight - safeTop))
+  const safeLeft = Math.max(0, Math.min(left ?? 0, contentWidth))
+  const safeRight = Math.max(0, Math.min(right ?? 0, contentWidth - safeLeft))
   externalEditorView.setBounds({
     x: safeLeft,
     y: safeTop,
-    width: Math.max(0, contentBounds.width - safeLeft - safeRight),
-    height: Math.max(0, contentBounds.height - safeTop - safeBottom)
+    width: Math.max(0, contentWidth - safeLeft - safeRight),
+    height: Math.max(0, contentHeight - safeTop - safeBottom)
   })
-  externalEditorView.setAutoResize({ width: true, height: true })
+  externalEditorView.setAutoResize({ width: true, height: true, horizontal: true, vertical: true })
 }
 
 function resetWebContentsZoom(wc: Electron.WebContents | null | undefined) {
@@ -87,6 +89,11 @@ function createWindow(): void {
   mainWindow.on('resize', () => updateExternalEditorBounds())
   mainWindow.on('maximize', () => updateExternalEditorBounds())
   mainWindow.on('unmaximize', () => updateExternalEditorBounds())
+  // 某些情况下（失焦/重新显示/移动窗口）BrowserView 可能出现 bounds 漂移，导致覆盖顶部工具条
+  mainWindow.on('focus', () => updateExternalEditorBounds())
+  mainWindow.on('show', () => updateExternalEditorBounds())
+  mainWindow.on('restore', () => updateExternalEditorBounds())
+  mainWindow.on('move', () => updateExternalEditorBounds())
 
   // 🔍 强制重置 UI 缩放（解决“整个 UI 被放大且重启仍不生效”——Chromium 会持久化 zoomLevel）
   const resetUiZoom = () => {
@@ -561,6 +568,15 @@ app.whenReady().then(() => {
     }
     updateExternalEditorBounds(externalEditorInsets)
 
+    // 主进程兜底：定时校正 BrowserView bounds，避免长时间运行后出现漂移覆盖工具条（表现为顶部“紫色一条线”）
+    if (!externalEditorBoundsKeepAliveTimer) {
+      externalEditorBoundsKeepAliveTimer = setInterval(() => {
+        try {
+          if (mainWindow && externalEditorView) updateExternalEditorBounds()
+        } catch {}
+      }, 2000)
+    }
+
     resetWebContentsZoom(externalEditorView.webContents)
 
     // 外链统一走系统浏览器
@@ -591,6 +607,10 @@ app.whenReady().then(() => {
     } catch {}
     externalEditorInsets = { top: 0, right: 0, bottom: 0, left: 0 }
     externalEditorUrl = null
+    if (externalEditorBoundsKeepAliveTimer) {
+      try { clearInterval(externalEditorBoundsKeepAliveTimer) } catch {}
+      externalEditorBoundsKeepAliveTimer = null
+    }
     return true
   })
   

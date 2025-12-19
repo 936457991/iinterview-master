@@ -29,11 +29,10 @@ import {
   DeleteOutlined,
   ReloadOutlined,
   EditOutlined,
-  EyeOutlined,
-  EyeInvisibleOutlined,
   CrownOutlined,
   GlobalOutlined,
   StopOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -56,6 +55,7 @@ interface Room {
   language: string;
   coderpadUrl?: string;
   coderpadExpiresAt?: string;
+  systemDesignUrl?: string;
   createdAt: string;
   onlineCount?: number; // 实时在线人数
   members: Array<{
@@ -85,7 +85,8 @@ const Dashboard: React.FC = () => {
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [activeTab, setActiveTab] = useState('active-rooms');
-  const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set());
+  // 🔧 Password temporarily disabled
+  // const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set());
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [form] = Form.useForm();
@@ -154,13 +155,24 @@ const Dashboard: React.FC = () => {
   const handleCreateRoom = async (values: any) => {
     try {
       const url = (values?.coderpadUrl || '').trim();
-      const payload: any = { ...values, coderpadUrl: url || undefined };
+      const systemDesignUrl = (values?.systemDesignUrl || '').trim();
+      const payload: any = {
+        ...values,
+        coderpadUrl: url || undefined,
+        systemDesignUrl: systemDesignUrl || undefined,
+      };
       if (!payload.coderpadUrl) {
         delete payload.coderpadUrl;
         delete payload.coderpadExpiresAt;
       } else {
         const picked = payload.coderpadExpiresAt;
         payload.coderpadExpiresAt = picked ? dayjs(picked).endOf('day').toISOString() : dayjs().add(2, 'day').endOf('day').toISOString();
+        // 外部链接房间不需要语言选项
+        delete payload.language;
+      }
+
+      if (!payload.systemDesignUrl) {
+        delete payload.systemDesignUrl;
       }
 
       await roomsAPI.createRoom(payload);
@@ -181,9 +193,10 @@ const Dashboard: React.FC = () => {
     editForm.setFieldsValue({
       name: room.name,
       description: room.description,
-      language: room.language,
+      language: room.coderpadUrl ? undefined : room.language,
       coderpadUrl: room.coderpadUrl || '',
       coderpadExpiresAt: room.coderpadUrl ? (room.coderpadExpiresAt ? dayjs(room.coderpadExpiresAt) : dayjs().add(2, 'day')) : undefined,
+      systemDesignUrl: room.systemDesignUrl || '',
     });
     setEditModalVisible(true);
   };
@@ -192,7 +205,12 @@ const Dashboard: React.FC = () => {
     if (!editingRoom) return;
     try {
       const url = (values?.coderpadUrl || '').trim();
-      const payload: any = { ...values, coderpadUrl: url || undefined };
+      const systemDesignUrl = (values?.systemDesignUrl || '').trim();
+      const payload: any = {
+        ...values,
+        coderpadUrl: url || undefined,
+        systemDesignUrl: systemDesignUrl || undefined,
+      };
       if (!payload.coderpadUrl) {
         // 关键：清空链接时必须显式传 null（否则 PATCH 会被视为“未更新该字段”）
         payload.coderpadUrl = null;
@@ -200,6 +218,13 @@ const Dashboard: React.FC = () => {
       } else {
         const picked = payload.coderpadExpiresAt;
         payload.coderpadExpiresAt = picked ? dayjs(picked).endOf('day').toISOString() : dayjs().add(2, 'day').endOf('day').toISOString();
+        // 外部链接房间不需要语言选项
+        delete payload.language;
+      }
+
+      // 清空系统设计链接时也必须显式传 null
+      if (!systemDesignUrl) {
+        payload.systemDesignUrl = null;
       }
 
       await roomsAPI.updateRoom(editingRoom.id, payload);
@@ -280,7 +305,8 @@ const Dashboard: React.FC = () => {
 
   const handleJoinByCode = async (values: any) => {
     try {
-      await roomsAPI.joinRoomByCode(values.roomCode, values.password);
+      // 🔧 Password temporarily disabled: join by code no longer requires password
+      await roomsAPI.joinRoomByCode(values.roomCode);
       message.success(t('room.alreadyJoined'));
       setJoinModalVisible(false);
       joinForm.resetFields();
@@ -323,17 +349,18 @@ const Dashboard: React.FC = () => {
     });
   };
 
-  const togglePasswordVisibility = (roomId: string) => {
-    setVisiblePasswords(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(roomId)) {
-        newSet.delete(roomId);
-      } else {
-        newSet.add(roomId);
-      }
-      return newSet;
-    });
-  };
+  // 🔧 Password temporarily disabled
+  // const togglePasswordVisibility = (roomId: string) => {
+  //   setVisiblePasswords(prev => {
+  //     const newSet = new Set(prev);
+  //     if (newSet.has(roomId)) {
+  //       newSet.delete(roomId);
+  //     } else {
+  //       newSet.add(roomId);
+  //     }
+  //     return newSet;
+  //   });
+  // };
 
 
   const refreshCurrentTab = () => {
@@ -653,6 +680,11 @@ const Dashboard: React.FC = () => {
                           }}>
                             {room.name}
                           </Text>
+                          {room.coderpadUrl && isExpired(room.coderpadExpiresAt) && (
+                            <Tooltip title={t('room.codeLinkExpiredHoverHint') || '房间代码链接已经过期，请更新'}>
+                              <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: 14 }} />
+                            </Tooltip>
+                          )}
                           <Tag
                             color="purple"
                             style={{
@@ -711,24 +743,27 @@ const Dashboard: React.FC = () => {
                       marginBottom: '6px',
                       minHeight: '18px'
                     }}>
-                      {room.password && (
-                        <Tooltip title={visiblePasswords.has(room.id) ? t('room.passwordVisible') : t('room.passwordHidden')}>
-                          <Tag
-                            color="orange"
-                            icon={visiblePasswords.has(room.id) ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-                            style={{
-                              margin: 0,
-                              fontSize: '9px',
-                              cursor: 'pointer',
-                              padding: '1px 4px',
-                              lineHeight: '1.2'
-                            }}
-                            onClick={() => togglePasswordVisibility(room.id)}
-                          >
-                            {visiblePasswords.has(room.id) ? room.password : t('room.roomPassword')}
-                          </Tag>
-                        </Tooltip>
-                      )}
+                      {/*
+                        🔧 Password temporarily disabled:
+                        {room.password && (
+                          <Tooltip title={visiblePasswords.has(room.id) ? t('room.passwordVisible') : t('room.passwordHidden')}>
+                            <Tag
+                              color="orange"
+                              icon={visiblePasswords.has(room.id) ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                              style={{
+                                margin: 0,
+                                fontSize: '9px',
+                                cursor: 'pointer',
+                                padding: '1px 4px',
+                                lineHeight: '1.2'
+                              }}
+                              onClick={() => togglePasswordVisibility(room.id)}
+                            >
+                              {visiblePasswords.has(room.id) ? room.password : t('room.roomPassword')}
+                            </Tag>
+                          </Tooltip>
+                        )}
+                      */}
                       <Tag color={getStatusColor(room.status)} style={{
                         margin: 0,
                         fontSize: '9px',
@@ -737,14 +772,46 @@ const Dashboard: React.FC = () => {
                       }}>
                         {getStatusText(room.status)}
                       </Tag>
-                      <Tag color="blue" style={{
-                        margin: 0,
-                        fontSize: '9px',
-                        padding: '1px 4px',
-                        lineHeight: '1.2'
-                      }}>
-                        {room.language}
-                      </Tag>
+                      {/* 外部链接房间：列表页不展示语言/代码标识 */}
+                      {!room.coderpadUrl && (
+                        <Tag color="blue" style={{
+                          margin: 0,
+                          fontSize: '9px',
+                          padding: '1px 4px',
+                          lineHeight: '1.2'
+                        }}>
+                          {room.language}
+                        </Tag>
+                      )}
+
+                      {room.coderpadUrl && (
+                        <Tag
+                          icon={<GlobalOutlined />}
+                          color="geekblue"
+                          style={{
+                            margin: 0,
+                            fontSize: '9px',
+                            padding: '1px 4px',
+                            lineHeight: '1.2'
+                          }}
+                        >
+                          {t('room.sharedLinkTag') || '外部链接'}
+                        </Tag>
+                      )}
+
+                      {room.coderpadUrl && isExpired(room.coderpadExpiresAt) && (
+                        <Tooltip title={t('room.codeLinkExpiredHoverHint') || '房间代码链接已经过期，请更新'}>
+                          <Tag color="red" style={{
+                            margin: 0,
+                            fontSize: '9px',
+                            padding: '1px 4px',
+                            lineHeight: '1.2',
+                            cursor: 'help',
+                          }}>
+                            {t('room.codeLinkExpired') || '链接已过期'}
+                          </Tag>
+                        </Tooltip>
+                      )}
                     </div>
 
                     {/* 底部信息 */}
@@ -841,6 +908,11 @@ const Dashboard: React.FC = () => {
                                   }}>
                                     {room.name}
                                   </Text>
+                                  {room.coderpadUrl && isExpired(room.coderpadExpiresAt) && (
+                                    <Tooltip title={t('room.codeLinkExpiredHoverHint') || '房间代码链接已经过期，请更新'}>
+                                      <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: 14 }} />
+                                    </Tooltip>
+                                  )}
                                   {room.status === 'normal' && (
                                     <Tooltip title={t('room.endRoom')}>
                                       <Button
@@ -919,24 +991,27 @@ const Dashboard: React.FC = () => {
                               marginBottom: '6px',
                               minHeight: '18px'
                             }}>
-                              {room.password && (
-                                <Tooltip title={visiblePasswords.has(room.id) ? t('room.passwordVisible') : t('room.passwordHidden')}>
-                                  <Tag
-                                    color="orange"
-                                    icon={visiblePasswords.has(room.id) ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-                                    style={{
-                                      margin: 0,
-                                      fontSize: '9px',
-                                      cursor: 'pointer',
-                                      padding: '1px 4px',
-                                      lineHeight: '1.2'
-                                    }}
-                                    onClick={() => togglePasswordVisibility(room.id)}
-                                  >
-                                    {visiblePasswords.has(room.id) ? room.password : t('room.roomPassword')}
-                                  </Tag>
-                                </Tooltip>
-                              )}
+                              {/*
+                                🔧 Password temporarily disabled:
+                                {room.password && (
+                                  <Tooltip title={visiblePasswords.has(room.id) ? t('room.passwordVisible') : t('room.passwordHidden')}>
+                                    <Tag
+                                      color="orange"
+                                      icon={visiblePasswords.has(room.id) ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                                      style={{
+                                        margin: 0,
+                                        fontSize: '9px',
+                                        cursor: 'pointer',
+                                        padding: '1px 4px',
+                                        lineHeight: '1.2'
+                                      }}
+                                      onClick={() => togglePasswordVisibility(room.id)}
+                                    >
+                                      {visiblePasswords.has(room.id) ? room.password : t('room.roomPassword')}
+                                    </Tag>
+                                  </Tooltip>
+                                )}
+                              */}
                               <Tag color={getStatusColor(room.status)} style={{
                                 margin: 0,
                                 fontSize: '9px',
@@ -945,14 +1020,17 @@ const Dashboard: React.FC = () => {
                               }}>
                                 {getStatusText(room.status)}
                               </Tag>
-                              <Tag color="blue" style={{
-                                margin: 0,
-                                fontSize: '9px',
-                                padding: '1px 4px',
-                                lineHeight: '1.2'
-                              }}>
-                                {room.language}
-                              </Tag>
+                      {/* 外部链接房间：列表页不展示语言/代码标识 */}
+                      {!room.coderpadUrl && (
+                        <Tag color="blue" style={{
+                          margin: 0,
+                          fontSize: '9px',
+                          padding: '1px 4px',
+                          lineHeight: '1.2'
+                        }}>
+                          {room.language}
+                        </Tag>
+                      )}
                               {room.coderpadUrl && (
                                 <Tooltip title={t('room.coderpadRoomHint') || ''}>
                                   <Tag
@@ -971,14 +1049,17 @@ const Dashboard: React.FC = () => {
                               )}
 
                               {room.coderpadUrl && isExpired(room.coderpadExpiresAt) && (
-                                <Tag color="red" style={{
-                                  margin: 0,
-                                  fontSize: '9px',
-                                  padding: '1px 4px',
-                                  lineHeight: '1.2'
-                                }}>
-                                  {t('room.codeLinkExpired') || '链接已过期'}
-                                </Tag>
+                                <Tooltip title={t('room.codeLinkExpiredHoverHint') || '房间代码链接已经过期，请更新'}>
+                                  <Tag color="red" style={{
+                                    margin: 0,
+                                    fontSize: '9px',
+                                    padding: '1px 4px',
+                                    lineHeight: '1.2',
+                                    cursor: 'help',
+                                  }}>
+                                    {t('room.codeLinkExpired') || '链接已过期'}
+                                  </Tag>
+                                </Tooltip>
                               )}
                             </div>
 
@@ -1042,6 +1123,19 @@ const Dashboard: React.FC = () => {
               />
             </Form.Item>
 
+            <Form.Item
+              name="systemDesignUrl"
+              label={t('room.systemDesignUrl') || '系统设计链接（可选）'}
+              rules={[
+                { type: 'url', message: t('room.coderpadUrlInvalid') || '请输入有效的 URL（包含 https://）' },
+              ]}
+            >
+              <Input
+                placeholder={t('room.systemDesignUrlPlaceholder') || '例如：https://excalidraw.com/ 或 https://docs.google.com/...'}
+                allowClear
+              />
+            </Form.Item>
+
             {/* 只要设置了代码链接，就可设置有效期（默认 2 天） */}
             <Form.Item noStyle shouldUpdate={(prev, cur) => prev.coderpadUrl !== cur.coderpadUrl}>
               {({ getFieldValue }) => {
@@ -1059,28 +1153,37 @@ const Dashboard: React.FC = () => {
               }}
             </Form.Item>
 
-            <Form.Item
-              name="password"
-              label={t('room.roomPassword')}
-            >
-              <Input.Password placeholder={t('room.roomPassword')} />
-            </Form.Item>
+            {/*
+              🔧 Password temporarily disabled:
+              <Form.Item name="password" label={t('room.roomPassword')}>
+                <Input.Password placeholder={t('room.roomPassword')} />
+              </Form.Item>
+            */}
 
-            <Form.Item
-              name="language"
-              label={t('editor.language')}
-              initialValue="javascript"
-            >
-              <Select>
-                <Option value="javascript">JavaScript</Option>
-                <Option value="typescript">TypeScript</Option>
-                <Option value="python">Python</Option>
-                <Option value="java">Java</Option>
-                <Option value="cpp">C++</Option>
-                <Option value="csharp">C#</Option>
-                <Option value="go">Go</Option>
-                <Option value="rust">Rust</Option>
-              </Select>
+            {/* 有外部链接时不需要选择编程语言 */}
+            <Form.Item noStyle shouldUpdate={(prev, cur) => prev.coderpadUrl !== cur.coderpadUrl}>
+              {({ getFieldValue }) => {
+                const url = (getFieldValue('coderpadUrl') || '').trim();
+                if (hasValidUrl(url)) return null;
+                return (
+                  <Form.Item
+                    name="language"
+                    label={t('editor.language')}
+                    initialValue="javascript"
+                  >
+                    <Select>
+                      <Option value="javascript">JavaScript</Option>
+                      <Option value="typescript">TypeScript</Option>
+                      <Option value="python">Python</Option>
+                      <Option value="java">Java</Option>
+                      <Option value="cpp">C++</Option>
+                      <Option value="csharp">C#</Option>
+                      <Option value="go">Go</Option>
+                      <Option value="rust">Rust</Option>
+                    </Select>
+                  </Form.Item>
+                );
+              }}
             </Form.Item>
 
             <Form.Item>
@@ -1121,12 +1224,12 @@ const Dashboard: React.FC = () => {
               <Input placeholder={t('room.roomCode')} maxLength={6} />
             </Form.Item>
 
-            <Form.Item
-              name="password"
-              label={t('room.roomPassword')}
-            >
-              <Input.Password placeholder={t('room.roomPassword')} />
-            </Form.Item>
+            {/*
+              🔧 Password temporarily disabled:
+              <Form.Item name="password" label={t('room.roomPassword')}>
+                <Input.Password placeholder={t('room.roomPassword')} />
+              </Form.Item>
+            */}
 
             <Form.Item>
               <Space>
@@ -1187,6 +1290,19 @@ const Dashboard: React.FC = () => {
               />
             </Form.Item>
 
+            <Form.Item
+              name="systemDesignUrl"
+              label={t('room.systemDesignUrl') || '系统设计链接（可选）'}
+              rules={[
+                { type: 'url', message: t('room.coderpadUrlInvalid') || '请输入有效的 URL（包含 https://）' },
+              ]}
+            >
+              <Input
+                placeholder={t('room.systemDesignUrlPlaceholder') || '例如：https://excalidraw.com/ 或 https://docs.google.com/...'}
+                allowClear
+              />
+            </Form.Item>
+
             {/* 只要设置了代码链接，就可设置有效期（默认 2 天） */}
             <Form.Item noStyle shouldUpdate={(prev, cur) => prev.coderpadUrl !== cur.coderpadUrl}>
               {({ getFieldValue }) => {
@@ -1216,21 +1332,30 @@ const Dashboard: React.FC = () => {
               }}
             </Form.Item>
 
-            <Form.Item
-              name="language"
-              label={t('editor.language')}
-              initialValue="javascript"
-            >
-              <Select>
-                <Option value="javascript">JavaScript</Option>
-                <Option value="typescript">TypeScript</Option>
-                <Option value="python">Python</Option>
-                <Option value="java">Java</Option>
-                <Option value="cpp">C++</Option>
-                <Option value="csharp">C#</Option>
-                <Option value="go">Go</Option>
-                <Option value="rust">Rust</Option>
-              </Select>
+            {/* 有外部链接时不需要选择编程语言 */}
+            <Form.Item noStyle shouldUpdate={(prev, cur) => prev.coderpadUrl !== cur.coderpadUrl}>
+              {({ getFieldValue }) => {
+                const url = (getFieldValue('coderpadUrl') || '').trim();
+                if (hasValidUrl(url)) return null;
+                return (
+                  <Form.Item
+                    name="language"
+                    label={t('editor.language')}
+                    initialValue="javascript"
+                  >
+                    <Select>
+                      <Option value="javascript">JavaScript</Option>
+                      <Option value="typescript">TypeScript</Option>
+                      <Option value="python">Python</Option>
+                      <Option value="java">Java</Option>
+                      <Option value="cpp">C++</Option>
+                      <Option value="csharp">C#</Option>
+                      <Option value="go">Go</Option>
+                      <Option value="rust">Rust</Option>
+                    </Select>
+                  </Form.Item>
+                );
+              }}
             </Form.Item>
 
             <Form.Item>
