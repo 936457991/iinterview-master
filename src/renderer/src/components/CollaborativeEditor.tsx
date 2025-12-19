@@ -924,6 +924,38 @@ const CollaborativeEditor: React.FC = () => {
     return null;
   }, [viewMode, useExternalEditor, room?.coderpadUrl, room?.systemDesignUrl]);
 
+  // 🌐 Web 环境：进入“外部链接房间/系统设计视图”时提示用户打开外部链接（仅提示一次）
+  useEffect(() => {
+    if (isElectron) return;
+    if (!roomId) return;
+    if (!externalViewUrl) return;
+
+    try {
+      const key = `external-link-prompted:${roomId}:${viewMode}`;
+      if (sessionStorage.getItem(key) === '1') return;
+      sessionStorage.setItem(key, '1');
+
+      Modal.confirm({
+        title: t('room.openExternalLinkTitle') || '打开外部链接？',
+        content:
+          t('room.openExternalLinkContent') ||
+          '该房间使用外部链接作为主要界面。是否现在在新标签页中打开？',
+        okText: t('room.openLink') || t('room.enterWebVersion') || '打开链接',
+        cancelText: t('common.cancel') || '取消',
+        onOk: () => {
+          try {
+            window.open(externalViewUrl, '_blank', 'noopener,noreferrer');
+          } catch (e) {
+            console.error('Failed to open external link:', e);
+          }
+        },
+      });
+    } catch (e) {
+      // sessionStorage 在部分环境可能不可用（例如禁用/隐私模式），此时降级为不提示
+      console.warn('External link prompt skipped:', e);
+    }
+  }, [isElectron, roomId, viewMode, externalViewUrl, t]);
+
   const getExternalTopInset = useCallback(() => {
     // 动态测量顶部工具条高度，避免系统缩放/字体变化导致 BrowserView 慢慢覆盖工具条（表现为“紫色一条线”）
     try {
@@ -2806,6 +2838,74 @@ const CollaborativeEditor: React.FC = () => {
       textAlign: 'center',
       flex: '0 0 auto',
     };
+
+    // Web 环境：隐藏顶部工具条（避免占空间/风格不一致），用提示卡片承载必要操作
+    if (!isElectron) {
+      return (
+        <Layout style={{ height: '100vh' }}>
+          <Content style={{ padding: 24 }}>
+            <Card style={{ maxWidth: 560, margin: '0 auto' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+                {t('room.switchToSystemDesign') || '系统设计'}
+              </div>
+              {room.roomCode && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: '#999' }}>{t('room.roomCode')}</span>
+                  <Tag
+                    color="purple"
+                    style={{
+                      margin: 0,
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      cursor: 'pointer',
+                      lineHeight: '18px',
+                      padding: '0 6px',
+                    }}
+                    onClick={() => copyRoomCode(room.roomCode)}
+                  >
+                    {room.roomCode}
+                  </Tag>
+                  {roomCodeCopied && (
+                    <Tag
+                      color="green"
+                      style={{
+                        margin: 0,
+                        fontSize: 12,
+                        lineHeight: '18px',
+                        padding: '0 6px',
+                      }}
+                    >
+                      {t('common.copied') || '已复制'}
+                    </Tag>
+                  )}
+                </div>
+              )}
+              <div style={{ color: '#666', marginBottom: 16, lineHeight: 1.6 }}>
+                {t('room.systemDesignWebVersionHint') || '在外部浏览器打开共享系统设计链接'}
+              </div>
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<GlobalOutlined />}
+                  onClick={() => window.open(room.systemDesignUrl!, '_blank', 'noopener,noreferrer')}
+                >
+                  {t('room.enterWebVersion') || t('room.openSystemDesignLink') || '打开链接'}
+                </Button>
+                <Button
+                  style={SWITCH_BTN_STYLE}
+                  icon={<CodeOutlined />}
+                  onClick={() => setViewMode('code')}
+                >
+                  {t('room.switchToCode') || t('room.backToCode') || '切换为代码页'}
+                </Button>
+                <Button onClick={handleLeaveRoom}>{t('room.leaveRoom')}</Button>
+              </Space>
+            </Card>
+          </Content>
+        </Layout>
+      );
+    }
+
     return (
       <Layout style={{ height: '100vh' }}>
         <Content style={{ padding: 0, position: 'relative', height: '100%' }}>
@@ -2875,7 +2975,7 @@ const CollaborativeEditor: React.FC = () => {
               size="small"
               icon={<GlobalOutlined />}
               type="primary"
-              onClick={() => window.open(room.systemDesignUrl!, '_blank')}
+              onClick={() => window.open(room.systemDesignUrl!, '_blank', 'noopener,noreferrer')}
             >
               {t('room.enterWebVersion') || t('room.openSystemDesignLink') || '打开链接'}
             </Button>
@@ -2910,27 +3010,7 @@ const CollaborativeEditor: React.FC = () => {
             )}
           </div>
 
-          {/* Electron: BrowserView 会铺满下面区域；Web: 给一个提示页 */}
-          {!isElectron && (
-            <div style={{ padding: 24, marginTop: 32 }}>
-              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
-                {t('room.switchToSystemDesign') || '切换为系统设计页'}
-              </div>
-              <div style={{ color: '#666', marginBottom: 12, lineHeight: 1.6 }}>
-                {t('room.enterWebVersion') || t('room.openSystemDesignLink') || '打开链接'}
-              </div>
-              <Space>
-                <Button type="primary" onClick={() => window.open(room.systemDesignUrl!, '_blank')}>
-                  {t('room.enterWebVersion') || t('room.openSystemDesignLink') || '打开链接'}
-                </Button>
-                <Button style={SWITCH_BTN_STYLE} icon={<CodeOutlined />} onClick={() => setViewMode('code')}>
-                  {t('room.switchToCode') || t('room.backToCode') || '切换为代码页'}
-                </Button>
-                <Button onClick={handleLeaveRoom}>{t('room.leaveRoom')}</Button>
-              </Space>
-            </div>
-          )}
-
+          {/* Electron: BrowserView 会铺满下面区域；Web: 展示提示页，引导用户在新标签页打开 */}
           <div style={{ width: '100%', height: '100%' }} />
         </Content>
       </Layout>
@@ -2979,6 +3059,75 @@ const CollaborativeEditor: React.FC = () => {
                 <Button onClick={handleLeaveRoom}>{t('room.leaveRoom')}</Button>
               </Space>
             </div>
+          </Content>
+        </Layout>
+      );
+    }
+
+    // Web 环境：隐藏顶部工具条（避免占空间/风格不一致），用提示卡片承载必要操作
+    if (!isElectron) {
+      return (
+        <Layout style={{ height: '100vh' }}>
+          <Content style={{ padding: 24 }}>
+            <Card style={{ maxWidth: 560, margin: '0 auto' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+                {t('room.sharedLinkTag') || '外部链接'}
+              </div>
+              {room.roomCode && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: '#999' }}>{t('room.roomCode')}</span>
+                  <Tag
+                    color="purple"
+                    style={{
+                      margin: 0,
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      cursor: 'pointer',
+                      lineHeight: '18px',
+                      padding: '0 6px',
+                    }}
+                    onClick={() => copyRoomCode(room.roomCode)}
+                  >
+                    {room.roomCode}
+                  </Tag>
+                  {roomCodeCopied && (
+                    <Tag
+                      color="green"
+                      style={{
+                        margin: 0,
+                        fontSize: 12,
+                        lineHeight: '18px',
+                        padding: '0 6px',
+                      }}
+                    >
+                      {t('common.copied') || '已复制'}
+                    </Tag>
+                  )}
+                </div>
+              )}
+              <div style={{ color: '#666', marginBottom: 16, lineHeight: 1.6 }}>
+                {t('room.enterWebVersionHint') || '在外部浏览器打开共享代码链接'}
+              </div>
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<GlobalOutlined />}
+                  onClick={() => window.open(room.coderpadUrl!, '_blank', 'noopener,noreferrer')}
+                >
+                  {t('room.enterWebVersion') || '打开链接'}
+                </Button>
+                {room.systemDesignUrl && (
+                  <Button
+                    style={SWITCH_BTN_STYLE}
+                    icon={<FileTextOutlined />}
+                    onClick={() => setViewMode('systemDesign')}
+                  >
+                    {t('room.switchToSystemDesign') || '切换为系统设计页'}
+                  </Button>
+                )}
+                <Button onClick={handleLeaveRoom}>{t('room.leaveRoom')}</Button>
+              </Space>
+            </Card>
           </Content>
         </Layout>
       );
@@ -3060,7 +3209,7 @@ const CollaborativeEditor: React.FC = () => {
               size="small"
               icon={<GlobalOutlined />}
               type="primary"
-              onClick={() => window.open(room.coderpadUrl!, '_blank')}
+              onClick={() => window.open(room.coderpadUrl!, '_blank', 'noopener,noreferrer')}
             >
               {t('room.enterWebVersion')}
             </Button>
@@ -3194,13 +3343,6 @@ const CollaborativeEditor: React.FC = () => {
                 alignItems: 'center',
                 gap: '6px'
               }}>
-                <div style={{
-                  fontSize: '10px',
-                  color: '#999',
-                  fontWeight: 400
-                }}>
-                  {t('room.roomCode')}
-                </div>
                 <Tag
                   color="purple"
                   style={{

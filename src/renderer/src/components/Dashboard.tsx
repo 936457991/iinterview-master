@@ -45,6 +45,9 @@ const { Header, Content } = Layout;
 const { Title, Text } = Typography;
 const { Option } = Select;
 
+// 以 Electron 桌面端的显示为准：Web 端也限制内容最大宽度，避免大屏下布局“变形”
+const DASHBOARD_MAX_WIDTH = 1200;
+
 interface Room {
   id: string;
   name: string;
@@ -531,301 +534,304 @@ const Dashboard: React.FC = () => {
 
       <Content style={{
         padding: '24px',
-        height: 'calc(100vh - 64px)',
+        // Web 端用 dvh 更贴近桌面应用的稳定高度；旧浏览器会忽略 dvh，继续用 vh
+        height: 'calc(100dvh - 64px)',
+        minHeight: 'calc(100vh - 64px)',
         overflow: 'auto'
       }}>
-        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Title level={2} style={{ margin: 0 }}>{t('dashboard.title')}</Title>
-          <Space>
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={refreshCurrentTab}
-              title={t('common.refresh')}
-              size="small"
-            >
-              {t('common.refresh')}
-            </Button>
-            <Button
-              icon={<LoginOutlined />}
-              onClick={() => setJoinModalVisible(true)}
-              size="small"
-            >
-              {t('room.joinRoom')}
-            </Button>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => setCreateModalVisible(true)}
-              size="small"
-            >
-              {t('room.createRoom')}
-            </Button>
-          </Space>
-        </div>
+        <div style={{ maxWidth: DASHBOARD_MAX_WIDTH, margin: '0 auto' }}>
+          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Title level={2} style={{ margin: 0 }}>{t('dashboard.title')}</Title>
+            <Space>
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={refreshCurrentTab}
+                title={t('common.refresh')}
+                size="small"
+              >
+                {t('common.refresh')}
+              </Button>
+              <Button
+                icon={<LoginOutlined />}
+                onClick={() => setJoinModalVisible(true)}
+                size="small"
+              >
+                {t('room.joinRoom')}
+              </Button>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => setCreateModalVisible(true)}
+                size="small"
+              >
+                {t('room.createRoom')}
+              </Button>
+            </Space>
+          </div>
 
-        <Tabs
-          activeKey={activeTab}
-          onChange={(key) => {
-            setActiveTab(key);
-            if (key === 'my-rooms' && myCreatedRooms.length === 0) {
-              loadMyCreatedRooms();
-            }
-          }}
-          items={[
-            {
-              key: 'active-rooms',
-              label: t('room.activeRooms'),
-              children: (
+          <Tabs
+            activeKey={activeTab}
+            onChange={(key) => {
+              setActiveTab(key);
+              if (key === 'my-rooms' && myCreatedRooms.length === 0) {
+                loadMyCreatedRooms();
+              }
+            }}
+            items={[
+              {
+                key: 'active-rooms',
+                label: t('room.activeRooms'),
+                children: (
 
-        <List
-          grid={{ gutter: 16, xs: 1, sm: 2, md: 3, lg: 3, xl: 4, xxl: 4 }}
-          dataSource={rooms}
-          loading={loading}
-          renderItem={(room) => {
-            const userMember = room.members.find(m => m.user.id === user?.id);
-            const isCreator = userMember?.role === 'admin';
+                  <List
+                    grid={{ gutter: 16, xs: 1, sm: 2, md: 3, lg: 3, xl: 4, xxl: 4 }}
+                    dataSource={rooms}
+                    loading={loading}
+                    renderItem={(room) => {
+                      const userMember = room.members.find(m => m.user.id === user?.id);
+                      const isCreator = userMember?.role === 'admin';
 
-            return (
-              <List.Item>
-                <Card
-                  hoverable
-                  style={{
-                    height: '200px',
-                    display: 'flex',
-                    flexDirection: 'column'
-                  }}
-                  styles={{
-                    body: {
-                      padding: '8px',
-                      flex: 1,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      overflow: 'hidden'
-                    },
-                    actions: {
-                      padding: '8px 4px',
-                      display: 'flex',
-                      justifyContent: 'space-around',
-                      gap: '8px'
-                    }
-                  }}
-                  actions={[
-                    <Tooltip title={room.status === 'ended' ? t('room.cannotEnterEndedRoom') : t('room.enterRoom')}>
-                      <Button
-                        type="primary"
-                        icon={<CodeOutlined />}
-                        onClick={() => handleJoinRoom(room.id)}
-                        size="small"
-                        disabled={room.status === 'ended'}
-                      >
-                        {t('common.enter')}
-                      </Button>
-                    </Tooltip>,
-                    null,
-                    (isCreator || user?.role === 'admin') ? (
-                      <Tooltip title={t('common.edit')}>
-                        <Button
-                          icon={<EditOutlined />}
-                          onClick={() => handleOpenEditRoom(room)}
-                          size="small"
-                        >
-                          {t('common.edit')}
-                        </Button>
-                      </Tooltip>
-                    ) : null,
-                    isCreator ? (
-                      <Tooltip title={t('room.deleteRoom')}>
-                        <Button
-                          danger
-                          icon={<DeleteOutlined />}
-                          onClick={() => handleDeleteRoom(room.id, room.name)}
-                          size="small"
-                        >
-                          {t('common.delete')}
-                        </Button>
-                      </Tooltip>
-                    ) : (
-                      <Tooltip title={t('room.leaveRoom')}>
-                        <Button
-                          danger
-                          icon={<LogoutOutlined />}
-                          onClick={() => handleLeaveRoom(room.id, room.name)}
-                          size="small"
-                        >
-                          {t('common.exit')}
-                        </Button>
-                      </Tooltip>
-                    ),
-                  ].filter(Boolean)}
-                >
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                    {/* 头部：状态图标 + 标题 + 房间号 */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: '6px' }}>
-                      <div style={{ marginRight: '6px', marginTop: '1px' }}>
-                        {room.status === 'normal' ? (
-                          <PlayCircleOutlined style={{ fontSize: 16, color: '#52c41a' }} />
-                        ) : (
-                          <PauseCircleOutlined style={{ fontSize: 16, color: '#ff4d4f' }} />
-                        )}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                          <Text strong style={{
-                            fontSize: '13px',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            flex: 1,
-                            lineHeight: '1.2'
-                          }}>
-                            {room.name}
-                          </Text>
-                          {room.coderpadUrl && isExpired(room.coderpadExpiresAt) && (
-                            <Tooltip title={t('room.codeLinkExpiredHoverHint') || '房间代码链接已经过期，请更新'}>
-                              <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: 14 }} />
-                            </Tooltip>
-                          )}
-                          <Tag
-                            color="purple"
+                      return (
+                        <List.Item>
+                          <Card
+                            hoverable
                             style={{
-                              margin: 0,
-                              fontSize: '9px',
-                              fontFamily: 'monospace',
-                              padding: '1px 4px',
-                              lineHeight: '1.2'
+                              height: '200px',
+                              display: 'flex',
+                              flexDirection: 'column'
                             }}
+                            styles={{
+                              body: {
+                                padding: '8px',
+                                flex: 1,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                overflow: 'hidden'
+                              },
+                              actions: {
+                                padding: '8px 4px',
+                                display: 'flex',
+                                justifyContent: 'space-around',
+                                gap: '8px'
+                              }
+                            }}
+                            actions={[
+                              <Tooltip title={room.status === 'ended' ? t('room.cannotEnterEndedRoom') : t('room.enterRoom')}>
+                                <Button
+                                  type="primary"
+                                  icon={<CodeOutlined />}
+                                  onClick={() => handleJoinRoom(room.id)}
+                                  size="small"
+                                  disabled={room.status === 'ended'}
+                                >
+                                  {t('common.enter')}
+                                </Button>
+                              </Tooltip>,
+                              null,
+                              (isCreator || user?.role === 'admin') ? (
+                                <Tooltip title={t('common.edit')}>
+                                  <Button
+                                    icon={<EditOutlined />}
+                                    onClick={() => handleOpenEditRoom(room)}
+                                    size="small"
+                                  >
+                                    {t('common.edit')}
+                                  </Button>
+                                </Tooltip>
+                              ) : null,
+                              isCreator ? (
+                                <Tooltip title={t('room.deleteRoom')}>
+                                  <Button
+                                    danger
+                                    icon={<DeleteOutlined />}
+                                    onClick={() => handleDeleteRoom(room.id, room.name)}
+                                    size="small"
+                                  >
+                                    {t('common.delete')}
+                                  </Button>
+                                </Tooltip>
+                              ) : (
+                                <Tooltip title={t('room.leaveRoom')}>
+                                  <Button
+                                    danger
+                                    icon={<LogoutOutlined />}
+                                    onClick={() => handleLeaveRoom(room.id, room.name)}
+                                    size="small"
+                                  >
+                                    {t('common.exit')}
+                                  </Button>
+                                </Tooltip>
+                              ),
+                            ].filter(Boolean)}
                           >
-                            {room.roomCode}
-                          </Tag>
-                        </div>
-                        {/* 创建者标识 */}
-                        {isCreator && (
-                          <Tag color="gold" icon={<CrownOutlined />} style={{
-                            margin: 0,
-                            fontSize: '9px',
-                            padding: '1px 4px',
-                            lineHeight: '1.2'
-                          }}>
-                            {t('room.creator')}
-                          </Tag>
-                        )}
-                      </div>
-                    </div>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                              {/* 头部：状态图标 + 标题 + 房间号 */}
+                              <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: '6px' }}>
+                                <div style={{ marginRight: '6px', marginTop: '1px' }}>
+                                  {room.status === 'normal' ? (
+                                    <PlayCircleOutlined style={{ fontSize: 16, color: '#52c41a' }} />
+                                  ) : (
+                                    <PauseCircleOutlined style={{ fontSize: 16, color: '#ff4d4f' }} />
+                                  )}
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                                    <Text strong style={{
+                                      fontSize: '13px',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                      flex: 1,
+                                      lineHeight: '1.2'
+                                    }}>
+                                      {room.name}
+                                    </Text>
+                                    {room.coderpadUrl && isExpired(room.coderpadExpiresAt) && (
+                                      <Tooltip title={t('room.codeLinkExpiredHoverHint') || '房间代码链接已经过期，请更新'}>
+                                        <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: 14 }} />
+                                      </Tooltip>
+                                    )}
+                                    <Tag
+                                      color="purple"
+                                      style={{
+                                        margin: 0,
+                                        fontSize: '9px',
+                                        fontFamily: 'monospace',
+                                        padding: '1px 4px',
+                                        lineHeight: '1.2'
+                                      }}
+                                    >
+                                      {room.roomCode}
+                                    </Tag>
+                                  </div>
+                                  {/* 创建者标识 */}
+                                  {isCreator && (
+                                    <Tag color="gold" icon={<CrownOutlined />} style={{
+                                      margin: 0,
+                                      fontSize: '9px',
+                                      padding: '1px 4px',
+                                      lineHeight: '1.2'
+                                    }}>
+                                      {t('room.creator')}
+                                    </Tag>
+                                  )}
+                                </div>
+                              </div>
 
-                    {/* 描述 */}
-                    <div style={{
-                      flex: 1,
-                      overflow: 'hidden',
-                      marginBottom: '8px'
-                    }}>
-                      <Text
-                        type="secondary"
-                        style={{
-                          display: '-webkit-box',
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden',
-                          fontSize: '11px',
-                          lineHeight: '1.3',
-                          wordBreak: 'break-word'
-                        }}
-                      >
-                        {room.description || t('room.noDescription')}
-                      </Text>
-                    </div>
+                              {/* 描述 */}
+                              <div style={{
+                                flex: 1,
+                                overflow: 'hidden',
+                                marginBottom: '8px'
+                              }}>
+                                <Text
+                                  type="secondary"
+                                  style={{
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden',
+                                    fontSize: '11px',
+                                    lineHeight: '1.3',
+                                    wordBreak: 'break-word'
+                                  }}
+                                >
+                                  {room.description || t('room.noDescription')}
+                                </Text>
+                              </div>
 
-                    {/* 标签区域 */}
-                    <div style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: '3px',
-                      alignItems: 'center',
-                      marginBottom: '6px',
-                      minHeight: '18px'
-                    }}>
-                      {/*
-                        🔧 Password temporarily disabled:
-                        {room.password && (
-                          <Tooltip title={visiblePasswords.has(room.id) ? t('room.passwordVisible') : t('room.passwordHidden')}>
-                            <Tag
-                              color="orange"
-                              icon={visiblePasswords.has(room.id) ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-                              style={{
-                                margin: 0,
-                                fontSize: '9px',
-                                cursor: 'pointer',
-                                padding: '1px 4px',
-                                lineHeight: '1.2'
-                              }}
-                              onClick={() => togglePasswordVisibility(room.id)}
-                            >
-                              {visiblePasswords.has(room.id) ? room.password : t('room.roomPassword')}
-                            </Tag>
-                          </Tooltip>
-                        )}
-                      */}
-                      <Tag color={getStatusColor(room.status)} style={{
-                        margin: 0,
-                        fontSize: '9px',
-                        padding: '1px 4px',
-                        lineHeight: '1.2'
-                      }}>
-                        {getStatusText(room.status)}
-                      </Tag>
-                      {/* 外部链接房间：列表页不展示语言/代码标识 */}
-                      {!room.coderpadUrl && (
-                        <Tag color="blue" style={{
-                          margin: 0,
-                          fontSize: '9px',
-                          padding: '1px 4px',
-                          lineHeight: '1.2'
-                        }}>
-                          {room.language}
-                        </Tag>
-                      )}
+                              {/* 标签区域 */}
+                              <div style={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                gap: '3px',
+                                alignItems: 'center',
+                                marginBottom: '6px',
+                                minHeight: '18px'
+                              }}>
+                                {/*
+                                  🔧 Password temporarily disabled:
+                                  {room.password && (
+                                    <Tooltip title={visiblePasswords.has(room.id) ? t('room.passwordVisible') : t('room.passwordHidden')}>
+                                      <Tag
+                                        color="orange"
+                                        icon={visiblePasswords.has(room.id) ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                                        style={{
+                                          margin: 0,
+                                          fontSize: '9px',
+                                          cursor: 'pointer',
+                                          padding: '1px 4px',
+                                          lineHeight: '1.2'
+                                        }}
+                                        onClick={() => togglePasswordVisibility(room.id)}
+                                      >
+                                        {visiblePasswords.has(room.id) ? room.password : t('room.roomPassword')}
+                                      </Tag>
+                                    </Tooltip>
+                                  )}
+                                */}
+                                <Tag color={getStatusColor(room.status)} style={{
+                                  margin: 0,
+                                  fontSize: '9px',
+                                  padding: '1px 4px',
+                                  lineHeight: '1.2'
+                                }}>
+                                  {getStatusText(room.status)}
+                                </Tag>
+                                {/* 外部链接房间：列表页不展示语言/代码标识 */}
+                                {!room.coderpadUrl && (
+                                  <Tag color="blue" style={{
+                                    margin: 0,
+                                    fontSize: '9px',
+                                    padding: '1px 4px',
+                                    lineHeight: '1.2'
+                                  }}>
+                                    {room.language}
+                                  </Tag>
+                                )}
 
-                      {room.coderpadUrl && (
-                        <Tag
-                          icon={<GlobalOutlined />}
-                          color="geekblue"
-                          style={{
-                            margin: 0,
-                            fontSize: '9px',
-                            padding: '1px 4px',
-                            lineHeight: '1.2'
-                          }}
-                        >
-                          {t('room.sharedLinkTag') || '外部链接'}
-                        </Tag>
-                      )}
+                                {room.coderpadUrl && (
+                                  <Tag
+                                    icon={<GlobalOutlined />}
+                                    color="geekblue"
+                                    style={{
+                                      margin: 0,
+                                      fontSize: '9px',
+                                      padding: '1px 4px',
+                                      lineHeight: '1.2'
+                                    }}
+                                  >
+                                    {t('room.sharedLinkTag') || '外部链接'}
+                                  </Tag>
+                                )}
 
-                      {room.coderpadUrl && isExpired(room.coderpadExpiresAt) && (
-                        <Tooltip title={t('room.codeLinkExpiredHoverHint') || '房间代码链接已经过期，请更新'}>
-                          <Tag color="red" style={{
-                            margin: 0,
-                            fontSize: '9px',
-                            padding: '1px 4px',
-                            lineHeight: '1.2',
-                            cursor: 'help',
-                          }}>
-                            {t('room.codeLinkExpired') || '链接已过期'}
-                          </Tag>
-                        </Tooltip>
-                      )}
-                    </div>
+                                {room.coderpadUrl && isExpired(room.coderpadExpiresAt) && (
+                                  <Tooltip title={t('room.codeLinkExpiredHoverHint') || '房间代码链接已经过期，请更新'}>
+                                    <Tag color="red" style={{
+                                      margin: 0,
+                                      fontSize: '9px',
+                                      padding: '1px 4px',
+                                      lineHeight: '1.2',
+                                      cursor: 'help',
+                                    }}>
+                                      {t('room.codeLinkExpired') || '链接已过期'}
+                                    </Tag>
+                                  </Tooltip>
+                                )}
+                              </div>
 
-                    {/* 底部信息 */}
-                    <div style={{ marginTop: 'auto' }}>
-                      <Text type="secondary" style={{ fontSize: '10px', lineHeight: '1.2' }}>
-                        {t('room.onlineUsers')}: {room.onlineCount !== undefined ? room.onlineCount : room.members.filter((m: any) => m.isOnline).length}
-                      </Text>
-                    </div>
-                  </div>
-                </Card>
-              </List.Item>
-            );
-          }}
-        />
+                              {/* 底部信息 */}
+                              <div style={{ marginTop: 'auto' }}>
+                                <Text type="secondary" style={{ fontSize: '10px', lineHeight: '1.2' }}>
+                                  {t('room.onlineUsers')}: {room.onlineCount !== undefined ? room.onlineCount : room.members.filter((m: any) => m.isOnline).length}
+                                </Text>
+                              </div>
+                            </div>
+                          </Card>
+                        </List.Item>
+                      );
+                    }}
+                  />
               ),
             },
             {
@@ -1079,7 +1085,8 @@ const Dashboard: React.FC = () => {
             },
            
           ]}
-        />
+          />
+        </div>
 
         <Modal
           title={t('room.createRoom')}
