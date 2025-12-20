@@ -71,6 +71,8 @@
     "codeLinkExpiredUserHint": "该房间的代码链接已超过有效期，请联系创建者更新链接后再进入。",
     "coderpadRoomHint": "该房间使用共享代码链接作为代码界面",
     "sharedLinkTag": "外部链接",
+    "externalCodeLinkTitle": "外部代码链接",
+    "externalSystemDesignLinkTitle": "外部系统设计链接",
     "enterWebVersion": "打开链接",
     "enterWebVersionHint": "在外部浏览器打开共享代码链接",
     "openExternalLinkTitle": "打开外部链接？",

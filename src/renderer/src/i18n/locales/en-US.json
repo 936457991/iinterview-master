@@ -69,6 +69,8 @@
     "codeLinkExpiredUserHint": "This room’s code link has expired. Please ask the creator to update the link before entering.",
     "coderpadRoomHint": "This room uses a shared code link as the coding interface",
     "sharedLinkTag": "External Link",
+    "externalCodeLinkTitle": "External Code Link",
+    "externalSystemDesignLinkTitle": "External System Design Link",
     "enterWebVersion": "Open Link",
     "enterWebVersionHint": "Open the shared code link in an external browser",
     "openExternalLinkTitle": "Open external link?",

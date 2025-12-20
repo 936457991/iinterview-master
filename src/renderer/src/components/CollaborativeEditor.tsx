@@ -2846,7 +2846,7 @@ const CollaborativeEditor: React.FC = () => {
           <Content style={{ padding: 24 }}>
             <Card style={{ maxWidth: 560, margin: '0 auto' }}>
               <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
-                {t('room.switchToSystemDesign') || '系统设计'}
+                {t('room.externalSystemDesignLinkTitle') || '外部系统设计链接'}
               </div>
               {room.roomCode && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -3071,7 +3071,7 @@ const CollaborativeEditor: React.FC = () => {
           <Content style={{ padding: 24 }}>
             <Card style={{ maxWidth: 560, margin: '0 auto' }}>
               <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
-                {t('room.sharedLinkTag') || '外部链接'}
+                {t('room.externalCodeLinkTitle') || '外部代码链接'}
               </div>
               {room.roomCode && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -3382,7 +3382,7 @@ const CollaborativeEditor: React.FC = () => {
                 boxShadow: '0 2px 4px rgba(255, 77, 79, 0.15)'
               }}
             >
-              <span style={{ fontSize: '16px' }}>🔓</span>
+              <span style={{ fontSize: '16px' }}>🔒</span>
               <style>{`
                 @keyframes pulse {
                   0% { opacity: 1; }
